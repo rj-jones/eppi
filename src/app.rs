@@ -7,9 +7,12 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 pub use crate::peppi::*;
+use crate::ui::helpers::{
+    expanding_content, format_date, format_duration, long_text, thick_row, NUM_MANUAL_ROWS,
+};
 
 #[derive(PartialEq, serde::Deserialize, serde::Serialize)]
-enum DemoType {
+pub(crate) enum DemoType {
     Manual,
     ReplayData,
     ManyHomogeneous,
@@ -151,8 +154,7 @@ impl Eppi {
                 if let Some(first_replay) = self.replay_analyzer.replays.get_mut(0) {
                     first_replay.opponent_rank = Some(cached_rank.clone());
                 }
-                self.scan_status =
-                    format!("Found cached rank for {opponent_tag}: {cached_rank}");
+                self.scan_status = format!("Found cached rank for {opponent_tag}: {cached_rank}");
                 self.is_fetching_rank = false;
                 return;
             }
@@ -419,9 +421,7 @@ impl Eppi {
                         0.0
                     };
                     ui.separator();
-                    ui.label(format!(
-                        "Your stats: {wins}/{losses} ({win_rate:.1}%)"
-                    ));
+                    ui.label(format!("Your stats: {wins}/{losses} ({win_rate:.1}%)"));
                 }
             });
 
@@ -873,59 +873,5 @@ impl Eppi {
     }
 }
 
-const NUM_MANUAL_ROWS: usize = 20;
-
-fn expanding_content(ui: &mut egui::Ui) {
-    ui.add(egui::Separator::default().horizontal());
-}
-
-fn long_text(row_index: usize) -> String {
-    format!("Row {row_index} has some long text that you may want to clip, or it will take up too much horizontal space!")
-}
-
-fn thick_row(row_index: usize) -> bool {
-    row_index % 6 == 0
-}
-
-fn format_date(date: std::time::SystemTime) -> String {
-    // For now, let's just show how many days ago the file was modified
-    if let Ok(duration_since) = std::time::SystemTime::now().duration_since(date) {
-        let days_ago = duration_since.as_secs() / 86400;
-        if days_ago == 0 {
-            "Today".to_string()
-        } else if days_ago == 1 {
-            "1 day ago".to_string()
-        } else if days_ago < 7 {
-            format!("{days_ago} days ago")
-        } else if days_ago < 30 {
-            let weeks = days_ago / 7;
-            if weeks == 1 {
-                "1 week ago".to_string()
-            } else {
-                format!("{weeks} weeks ago")
-            }
-        } else {
-            let months = days_ago / 30;
-            if months == 1 {
-                "1 month ago".to_string()
-            } else {
-                format!("{months} months ago")
-            }
-        }
-    } else {
-        "Unknown".to_string()
-    }
-}
-
-fn format_duration(frames: i32) -> String {
-    // Melee runs at 60 FPS
-    let total_seconds = frames / 60;
-    let minutes = total_seconds / 60;
-    let seconds = total_seconds % 60;
-
-    if minutes > 0 {
-        format!("{minutes}:{seconds:02}")
-    } else {
-        format!("0:{seconds:02}")
-    }
-}
+// Helper constant & functions (NUM_MANUAL_ROWS, expanding_content, long_text, etc.)
+// have been moved to `crate::ui::helpers`.

@@ -4,3 +4,6 @@ mod app;
 pub use app::Eppi;
 
 mod peppi;
+
+pub mod ui;
+mod web;
