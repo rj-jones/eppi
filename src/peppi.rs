@@ -10,11 +10,9 @@ use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
 pub struct ReplayInfo {
-    pub file_path: String,
     pub player1: PlayerInfo,
     pub player2: PlayerInfo,
     pub result: GameResult,
-    pub stage: Option<u16>,
     pub stage_name: String,
     pub duration: Option<i32>,
     pub date: Option<SystemTime>,
@@ -24,9 +22,6 @@ pub struct ReplayInfo {
 #[derive(Debug, Clone)]
 pub struct PlayerInfo {
     pub name: String,
-    pub character: Option<u8>,
-    pub port: Port,
-    pub team: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,8 +48,7 @@ impl ReplayAnalyzer {
         let mut replays: Vec<ReplayInfo> = WalkDir::new(dir_path)
             .into_iter()
             .filter_map(|e| {
-                if e.is_ok() {
-                    let entry = e.unwrap();
+                if let Ok(entry) = e {
                     if entry.path().is_file()
                         && entry.path().extension().and_then(|s| s.to_str()) == Some("slp")
                     {
@@ -71,10 +65,7 @@ impl ReplayAnalyzer {
                 let path = entry.path();
                 let file_path = path.to_str().unwrap().to_string();
 
-                match parse_replay(&file_path) {
-                    Ok(replay_info) => Some(replay_info),
-                    Err(_) => None,
-                }
+                parse_replay(&file_path).ok()
             })
             .collect();
 
@@ -115,52 +106,6 @@ impl ReplayAnalyzer {
         (wins, losses)
     }
 
-    pub async fn lookup_opponent_rank(
-        &mut self,
-        player_tag: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.replays.is_empty() {
-            return Ok(());
-        }
-
-        // Get the opponent from the most recent replay
-        let most_recent_replay = &self.replays[0];
-        let opponent_tag = if most_recent_replay.player1.name == player_tag {
-            &most_recent_replay.player2.name
-        } else {
-            &most_recent_replay.player1.name
-        };
-
-        // Skip if we already have this player's rank cached
-        if self.rank_cache.contains_key(opponent_tag) {
-            return Ok(());
-        }
-
-        // Skip if opponent is "Unknown"
-        if opponent_tag == "Unknown" {
-            return Ok(());
-        }
-
-        // Fetch rank from slippi.gg
-        match fetch_player_rank(opponent_tag).await {
-            Ok(rank) => {
-                self.rank_cache.insert(opponent_tag.clone(), rank.clone());
-
-                // Update the most recent replay with the opponent's rank
-                if let Some(first_replay) = self.replays.get_mut(0) {
-                    first_replay.opponent_rank = Some(rank);
-                }
-            }
-            Err(e) => {
-                println!("Failed to fetch rank for {}: {}", opponent_tag, e);
-                self.rank_cache
-                    .insert(opponent_tag.clone(), "Unknown".to_string());
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn get_cached_rank(&self, player_tag: &str) -> Option<&String> {
         self.rank_cache.get(player_tag)
     }
@@ -177,7 +122,7 @@ pub fn parse_replay(file_path: &str) -> io::Result<ReplayInfo> {
     let game = slippi::read(&mut r, None).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to parse replay: {}", e),
+            format!("Failed to parse replay: {e}"),
         )
     })?;
 
@@ -195,11 +140,9 @@ pub fn parse_replay(file_path: &str) -> io::Result<ReplayInfo> {
         .and_then(|metadata| metadata.modified().ok());
 
     Ok(ReplayInfo {
-        file_path: file_path.to_string(),
         player1,
         player2,
         result,
-        stage: Some(stage),
         stage_name,
         duration,
         date,
@@ -208,10 +151,7 @@ pub fn parse_replay(file_path: &str) -> io::Result<ReplayInfo> {
 }
 
 pub async fn fetch_player_rank(player_tag: &str) -> Result<String, Box<dyn std::error::Error>> {
-    println!(
-        "🌐 Fetching rank for player: {} via Slippi GraphQL API",
-        player_tag
-    );
+    println!("🌐 Fetching rank for player: {player_tag} via Slippi GraphQL API");
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
@@ -258,7 +198,7 @@ pub async fn fetch_player_rank(player_tag: &str) -> Result<String, Box<dyn std::
     let json_response: serde_json::Value = serde_json::from_str(&response_text)?;
 
     println!("🔍 Parsing GraphQL response...");
-    println!("Full JSON response: {}", json_response); // Debugging: print full JSON
+    println!("Full JSON response: {json_response}"); // Debugging: print full JSON
 
     // Extract player data from the response
     if let Some(user_data) = json_response.get("data").and_then(|d| d.get("getUser")) {
@@ -267,13 +207,13 @@ pub async fn fetch_player_rank(player_tag: &str) -> Result<String, Box<dyn std::
                 ranked_profile.get("ratingOrdinal").and_then(|r| r.as_f64())
             {
                 let rank = elo_to_rank(rating_ordinal as i32);
-                println!("✅ Found rank: {} (ELO: {})", rank, rating_ordinal);
+                println!("✅ Found rank: {rank} (ELO: {rating_ordinal})");
                 return Ok(rank);
             } else {
                 // Player has a ranked profile but no ratingOrdinal (e.g., unranked season)
                 println!("⚠️  Player has ranked profile but no ratingOrdinal.");
                 if let Some(display_name) = user_data.get("displayName").and_then(|n| n.as_str()) {
-                    return Ok(format!("{} (Unranked Season)", display_name));
+                    return Ok(format!("{display_name} (Unranked Season)"));
                 }
             }
         }
@@ -281,8 +221,7 @@ pub async fn fetch_player_rank(player_tag: &str) -> Result<String, Box<dyn std::
         // Check if player exists but has no ranked data (not even a profile)
         if let Some(display_name) = user_data.get("displayName").and_then(|n| n.as_str()) {
             println!(
-                "⚠️  Player '{}' found but has no ranked netplay profile (or no ratingOrdinal).",
-                display_name
+                "⚠️  Player '{display_name}' found but has no ranked netplay profile (or no ratingOrdinal)."
             );
             return Ok("Unranked".to_string());
         }
@@ -290,14 +229,11 @@ pub async fn fetch_player_rank(player_tag: &str) -> Result<String, Box<dyn std::
 
     // Check for errors in the response (e.g., player not found)
     if let Some(errors) = json_response.get("errors") {
-        println!("❌ GraphQL errors: {}", errors);
-        return Err(format!("GraphQL API returned errors: {}", errors).into());
+        println!("❌ GraphQL errors: {errors}");
+        return Err(format!("GraphQL API returned errors: {errors}").into());
     }
 
-    println!(
-        "❌ Player not found or no ranking data available in response: {}",
-        json_response
-    );
+    println!("❌ Player not found or no ranking data available in response: {json_response}");
     Err("Player not found or no ranking data available".into())
 }
 
@@ -327,7 +263,7 @@ fn elo_to_rank(elo: i32) -> String {
 
 fn extract_game_duration(game: &Game) -> Option<i32> {
     // Get the last frame ID which represents the game duration in frames
-    if let Some(last_frame) = game.frames.id.iter().enumerate().last() {
+    if let Some(last_frame) = game.frames.id.iter().enumerate().next_back() {
         if let Some(frame_id) = last_frame.1 {
             return Some(*frame_id);
         }
@@ -367,7 +303,7 @@ fn stage_id_to_name(stage_id: u16) -> String {
         30 => "Kongo Jungle N64".to_string(),
         31 => "Battlefield".to_string(),
         32 => "Final Destination".to_string(),
-        _ => format!("Unknown Stage ({})", stage_id),
+        _ => format!("Unknown Stage ({stage_id})"),
     }
 }
 
@@ -382,15 +318,10 @@ fn extract_player_info(game: &Game) -> io::Result<(PlayerInfo, PlayerInfo)> {
     // Get character and team info from start data
     let mut players_info = Vec::new();
 
-    for (i, player) in game.start.players.iter().enumerate() {
+    for (i, _player) in game.start.players.iter().enumerate() {
         let name = if i == 0 { &player1_name } else { &player2_name };
 
-        players_info.push(PlayerInfo {
-            name: name.clone(),
-            character: Some(player.character),
-            port: player.port,
-            team: player.team.map(|t| t.color),
-        });
+        players_info.push(PlayerInfo { name: name.clone() });
     }
 
     if players_info.len() >= 2 {
@@ -449,31 +380,4 @@ fn determine_game_result(game: &Game) -> io::Result<GameResult> {
     }
 
     Ok(GameResult::Unknown)
-}
-
-// Legacy main function for standalone usage
-fn main() -> io::Result<()> {
-    let mut analyzer = ReplayAnalyzer::new();
-    let dir_path = "C:\\Users\\rjjones\\Documents\\Slippi\\";
-
-    println!("Scanning directory: {}", dir_path);
-    analyzer.scan_directory(dir_path)?;
-
-    println!("Found {} replays", analyzer.replays.len());
-
-    let player_tag = "BEAN#888";
-    let (wins, losses) = analyzer.get_stats_for_player(player_tag);
-    let total_games = wins + losses;
-    let win_rate = if total_games > 0 {
-        wins as f64 / total_games as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    println!(
-        "Stats for {}: {}/{} ({:.2}%)",
-        player_tag, wins, losses, win_rate
-    );
-
-    Ok(())
 }

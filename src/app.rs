@@ -121,7 +121,7 @@ impl Eppi {
                         format!("Found {} replays", self.replay_analyzer.replays.len());
                 }
                 Err(e) => {
-                    self.scan_status = format!("Error: {}", e);
+                    self.scan_status = format!("Error: {e}");
                 }
             }
             self.is_scanning = false;
@@ -152,7 +152,7 @@ impl Eppi {
                     first_replay.opponent_rank = Some(cached_rank.clone());
                 }
                 self.scan_status =
-                    format!("Found cached rank for {}: {}", opponent_tag, cached_rank);
+                    format!("Found cached rank for {opponent_tag}: {cached_rank}");
                 self.is_fetching_rank = false;
                 return;
             }
@@ -168,7 +168,7 @@ impl Eppi {
             tokio::spawn(async move {
                 let result = match crate::peppi::fetch_player_rank(&opponent_tag_clone).await {
                     Ok(rank) => Ok(rank),
-                    Err(e) => Err(format!("Failed to fetch rank: {}", e)),
+                    Err(e) => Err(format!("Failed to fetch rank: {e}")),
                 };
 
                 // Send result through channel
@@ -178,7 +178,7 @@ impl Eppi {
                 }
             });
 
-            self.scan_status = format!("Looking up rank for {}...", opponent_tag);
+            self.scan_status = format!("Looking up rank for {opponent_tag}...");
         }
     }
 
@@ -198,7 +198,7 @@ impl Eppi {
             _ => return None,
         };
 
-        Some(format!("assets/rank-icons/{}.svg", icon_name))
+        Some(format!("assets/rank-icons/{icon_name}.svg"))
     }
 
     fn load_rank_icons(&mut self, ctx: &egui::Context) {
@@ -244,11 +244,11 @@ impl Eppi {
                             self.rank_icons.insert(rank.to_string(), texture);
                         }
                         Err(e) => {
-                            eprintln!("Failed to load rank icon {}: {}", icon_path, e);
+                            eprintln!("Failed to load rank icon {icon_path}: {e}");
                         }
                     }
                 } else {
-                    eprintln!("Failed to read rank icon file: {}", icon_path);
+                    eprintln!("Failed to read rank icon file: {icon_path}");
                 }
             }
         }
@@ -275,7 +275,7 @@ impl eframe::App for Eppi {
                         if let Some(first_replay) = self.replay_analyzer.replays.get_mut(0) {
                             first_replay.opponent_rank = Some(rank.clone());
                         }
-                        self.scan_status = format!("Found rank for {}: {}", opponent_tag, rank);
+                        self.scan_status = format!("Found rank for {opponent_tag}: {rank}");
                     }
                     Err(error_msg) => {
                         // Cache the error to avoid retrying
@@ -283,7 +283,7 @@ impl eframe::App for Eppi {
                             .rank_cache
                             .insert(opponent_tag.clone(), "Unknown".to_string());
                         self.scan_status =
-                            format!("Failed to lookup rank for {}: {}", opponent_tag, error_msg);
+                            format!("Failed to lookup rank for {opponent_tag}: {error_msg}");
                     }
                 }
                 self.is_fetching_rank = false;
@@ -420,8 +420,7 @@ impl Eppi {
                     };
                     ui.separator();
                     ui.label(format!(
-                        "Your stats: {}/{} ({:.1}%)",
-                        wins, losses, win_rate
+                        "Your stats: {wins}/{losses} ({win_rate:.1}%)"
                     ));
                 }
             });
@@ -897,20 +896,20 @@ fn format_date(date: std::time::SystemTime) -> String {
         } else if days_ago == 1 {
             "1 day ago".to_string()
         } else if days_ago < 7 {
-            format!("{} days ago", days_ago)
+            format!("{days_ago} days ago")
         } else if days_ago < 30 {
             let weeks = days_ago / 7;
             if weeks == 1 {
                 "1 week ago".to_string()
             } else {
-                format!("{} weeks ago", weeks)
+                format!("{weeks} weeks ago")
             }
         } else {
             let months = days_ago / 30;
             if months == 1 {
                 "1 month ago".to_string()
             } else {
-                format!("{} months ago", months)
+                format!("{months} months ago")
             }
         }
     } else {
@@ -925,8 +924,8 @@ fn format_duration(frames: i32) -> String {
     let seconds = total_seconds % 60;
 
     if minutes > 0 {
-        format!("{}:{:02}", minutes, seconds)
+        format!("{minutes}:{seconds:02}")
     } else {
-        format!("0:{:02}", seconds)
+        format!("0:{seconds:02}")
     }
 }
