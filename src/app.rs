@@ -1,15 +1,12 @@
 use eframe::egui;
 use egui::TextureHandle;
-use egui::{TextStyle, TextWrapMode};
 use egui_file::FileDialog;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
 pub use crate::peppi::*;
-use crate::ui::helpers::{
-    expanding_content, format_date, format_duration, long_text, thick_row, NUM_MANUAL_ROWS,
-};
+use crate::ui::helpers::{format_date, format_duration};
 
 #[derive(PartialEq, serde::Deserialize, serde::Serialize)]
 pub(crate) enum DemoType {
@@ -316,8 +313,6 @@ impl eframe::App for Eppi {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eppi");
-
             ui.horizontal(|ui| {
                 ui.label("My Connect Code:");
                 ui.text_edit_singleline(&mut self.connect_code);
@@ -388,28 +383,17 @@ impl eframe::App for Eppi {
 
 impl Eppi {
     fn replays_table(&mut self, ui: &mut egui::Ui) {
-        let mut reset = false;
+        // Always use striped rows, resizable columns and clickable rows.
+        self.striped = true;
+        self.resizable = true;
+        self.clickable = true;
+
+        // The demo modes have been removed ‑ we are always in replay-data mode.
+        self.demo = DemoType::ReplayData;
 
         ui.vertical(|ui| {
+            // Display W/L stats if a connect code is provided
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.striped, "Striped");
-                ui.checkbox(&mut self.resizable, "Resizable columns");
-                ui.checkbox(&mut self.clickable, "Clickable rows");
-            });
-
-            // Show current mode and replay count prominently
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("📊 Replay Data Mode")
-                        .strong()
-                        .color(egui::Color32::from_rgb(100, 149, 237)),
-                );
-                ui.separator();
-                ui.label(format!(
-                    "Showing {} replays",
-                    self.replay_analyzer.replays.len()
-                ));
-
                 if !self.connect_code.is_empty() {
                     let (wins, losses) = self
                         .replay_analyzer
@@ -420,81 +404,17 @@ impl Eppi {
                     } else {
                         0.0
                     };
-                    ui.separator();
-                    ui.label(format!("Your stats: {wins}/{losses} ({win_rate:.1}%)"));
+                    ui.label(format!("W/L: {wins}/{losses} ({win_rate:.1}%)"));
                 }
             });
-
-            // Only show demo options in a collapsible section for debugging
-            ui.collapsing("🔧 Debug: Table Demo Options", |ui| {
-                ui.label("Display mode:");
-                ui.radio_value(&mut self.demo, DemoType::ReplayData, "Replay data");
-                ui.radio_value(&mut self.demo, DemoType::Manual, "Demo data");
-
-                if self.demo != DemoType::ReplayData {
-                    ui.radio_value(
-                        &mut self.demo,
-                        DemoType::ManyHomogeneous,
-                        "Thousands of rows of same height",
-                    );
-                    ui.radio_value(
-                        &mut self.demo,
-                        DemoType::ManyHeterogenous,
-                        "Thousands of rows of differing heights",
-                    );
-
-                    if self.demo != DemoType::Manual {
-                        ui.add(
-                            egui::Slider::new(&mut self.num_rows, 0..=100_000)
-                                .logarithmic(true)
-                                .text("Num rows"),
-                        );
-                    }
-
-                    let max_rows = if self.demo == DemoType::Manual {
-                        NUM_MANUAL_ROWS
-                    } else {
-                        self.num_rows
-                    };
-
-                    let slider_response = ui.add(
-                        egui::Slider::new(&mut self.scroll_to_row_slider, 0..=max_rows)
-                            .logarithmic(true)
-                            .text("Row to scroll to"),
-                    );
-                    if slider_response.changed() {
-                        self.scroll_to_row = Some(self.scroll_to_row_slider);
-                    }
-                }
-            });
-
-            reset = ui.button("Reset").clicked();
         });
 
         ui.separator();
 
-        // Leave room for the source code link after the table demo:
-        let body_text_size = TextStyle::Body.resolve(ui.style()).size;
-        use egui_extras::{Size, StripBuilder};
-        StripBuilder::new(ui)
-            .size(Size::remainder().at_least(100.0)) // for the table
-            .size(Size::exact(body_text_size)) // for the source code link
-            .vertical(|mut strip| {
-                strip.cell(|ui| {
-                    egui::ScrollArea::horizontal().show(ui, |ui| {
-                        self.table_ui(ui, reset);
-                    });
-                });
-                strip.cell(|ui| {
-                    ui.vertical_centered(|ui| {
-                        if self.demo == DemoType::ReplayData {
-                            ui.label("Slippi Replays");
-                        } else {
-                            ui.label("Table Demo");
-                        }
-                    });
-                });
-            });
+        // The table itself
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            self.table_ui(ui, /*reset=*/ false);
+        });
     }
 
     fn table_ui(&mut self, ui: &mut egui::Ui, reset: bool) {
@@ -507,38 +427,19 @@ impl Eppi {
 
         let available_height = ui.available_height();
 
-        let mut table = if self.demo == DemoType::ReplayData {
-            TableBuilder::new(ui)
-                .striped(self.striped)
-                .resizable(self.resizable)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto().at_least(100.0)) // Player 1
-                .column(Column::auto().at_least(100.0)) // Player 2
-                .column(Column::auto().at_least(60.0)) // Result
-                .column(Column::auto().at_least(120.0)) // Stage
-                .column(Column::auto().at_least(80.0)) // Date
-                .column(Column::auto().at_least(70.0)) // Duration
-                .column(Column::auto().at_least(120.0)) // Opponent Rank
-                .min_scrolled_height(0.0)
-                .max_scroll_height(available_height)
-        } else {
-            TableBuilder::new(ui)
-                .striped(self.striped)
-                .resizable(self.resizable)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto())
-                .column(
-                    Column::remainder()
-                        .at_least(40.0)
-                        .clip(true)
-                        .resizable(true),
-                )
-                .column(Column::auto())
-                .column(Column::remainder())
-                .column(Column::remainder())
-                .min_scrolled_height(0.0)
-                .max_scroll_height(available_height)
-        };
+        let mut table = TableBuilder::new(ui)
+            .striped(self.striped)
+            .resizable(self.resizable)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().at_least(100.0)) // Player 1
+            .column(Column::auto().at_least(100.0)) // Player 2
+            .column(Column::auto().at_least(60.0)) // Result
+            .column(Column::auto().at_least(120.0)) // Stage
+            .column(Column::auto().at_least(80.0)) // Date
+            .column(Column::auto().at_least(70.0)) // Duration
+            .column(Column::auto().at_least(120.0)) // Opponent Rank
+            .min_scrolled_height(0.0)
+            .max_scroll_height(available_height);
 
         if self.clickable {
             table = table.sense(egui::Sense::click());
@@ -552,326 +453,182 @@ impl Eppi {
             table.reset();
         }
 
-        if self.demo == DemoType::ReplayData {
-            table
-                .header(20.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("Player 1");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Player 2");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Result");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Stage");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Date");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Duration");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Opponent Rank");
-                    });
-                })
-                .body(|mut body| {
-                    let replays = &self.replay_analyzer.replays;
-                    let connect_code = &self.connect_code;
-                    let mut rows_to_toggle = Vec::new();
-
-                    if replays.is_empty() {
-                        // Show helpful message when no replays are loaded
-                        body.row(30.0, |mut row| {
-                            row.col(|ui| {
-                                ui.label("");
-                            });
-                            row.col(|ui| {
-                                ui.label("");
-                            });
-                            row.col(|ui| {
-                                ui.colored_label(egui::Color32::GRAY, "No replays loaded. Browse to your Slippi directory and click 'Scan Replays'");
-                            });
-                            row.col(|ui| {
-                                ui.label("");
-                            });
-                            row.col(|ui| {
-                                ui.label("");
-                            });
-                            row.col(|ui| {
-                                ui.label("");
-                            });
-                            row.col(|ui| {
-                                ui.label("");
-                            });
-                        });
-                    }
-
-                    for (row_index, replay) in replays.iter().enumerate() {
-                        body.row(text_height, |mut row| {
-                            row.set_selected(self.selection.contains(&row_index));
-
-                            row.col(|ui| {
-                                ui.label(&replay.player1.name);
-                            });
-                            row.col(|ui| {
-                                ui.label(&replay.player2.name);
-                            });
-                            row.col(|ui| {
-                                let (result_text, color) = match &replay.result {
-                                    GameResult::Player1Won => {
-                                        if !connect_code.is_empty()
-                                            && replay.player1.name == *connect_code
-                                        {
-                                            ("WIN", egui::Color32::GREEN)
-                                        } else if !connect_code.is_empty()
-                                            && replay.player2.name == *connect_code
-                                        {
-                                            ("LOSS", egui::Color32::RED)
-                                        } else {
-                                            ("P1 Win", egui::Color32::GRAY)
-                                        }
-                                    }
-                                    GameResult::Player2Won => {
-                                        if !connect_code.is_empty()
-                                            && replay.player2.name == *connect_code
-                                        {
-                                            ("WIN", egui::Color32::GREEN)
-                                        } else if !connect_code.is_empty()
-                                            && replay.player1.name == *connect_code
-                                        {
-                                            ("LOSS", egui::Color32::RED)
-                                        } else {
-                                            ("P2 Win", egui::Color32::GRAY)
-                                        }
-                                    }
-                                    GameResult::Unknown => ("Unknown", egui::Color32::YELLOW),
-                                };
-                                ui.colored_label(color, result_text);
-                            });
-                            row.col(|ui| {
-                                ui.label(&replay.stage_name);
-                            });
-                            row.col(|ui| {
-                                let date_text = if let Some(date) = replay.date {
-                                    format_date(date)
-                                } else {
-                                    "Unknown".to_string()
-                                };
-                                ui.label(date_text);
-                            });
-                            row.col(|ui| {
-                                let duration_text = if let Some(duration_frames) = replay.duration {
-                                    format_duration(duration_frames)
-                                } else {
-                                    "Unknown".to_string()
-                                };
-                                ui.label(duration_text);
-                            });
-                            row.col(|ui| {
-                                // Show opponent rank based on who the user is
-                                let opponent_name = if !connect_code.is_empty() {
-                                    if replay.player1.name == *connect_code {
-                                        &replay.player2.name
-                                    } else if replay.player2.name == *connect_code {
-                                        &replay.player1.name
-                                    } else {
-                                        "N/A"
-                                    }
-                                } else {
-                                    "N/A"
-                                };
-
-                                let rank_text = if opponent_name != "N/A" {
-                                    // Check if this is the most recent replay and if rank lookup was performed
-                                    if row_index == 0 {
-                                        replay.opponent_rank.as_deref().unwrap_or("Unknown")
-                                    } else {
-                                        "Unknown"
-                                    }
-                                } else {
-                                    "N/A"
-                                };
-
-                                // Display icon and rank text horizontally
-                                ui.horizontal(|ui| {
-                                    // Show rank icon if available
-                                    if let Some(icon_texture) = self.rank_icons.get(rank_text) {
-                                        ui.add(egui::Image::from_texture(icon_texture).max_size(egui::Vec2::new(20.0, 20.0)));
-                                    }
-                                    ui.label(rank_text);
-                                });
-                            });
-
-                            if row.response().clicked() {
-                                rows_to_toggle.push(row_index);
-                            }
-                        });
-                    }
-
-                    // Handle row selection after the iteration
-                    for row_index in rows_to_toggle {
-                        if self.selection.contains(&row_index) {
-                            self.selection.remove(&row_index);
-                        } else {
-                            self.selection.insert(row_index);
-                        }
-                    }
+        table
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Player 1");
                 });
-        } else {
-            // Original demo table code
-            table
-                .header(20.0, |mut header| {
-                    header.col(|ui| {
-                        egui::Sides::new().show(
-                            ui,
-                            |ui| {
-                                ui.strong("Row");
-                            },
-                            |ui| {
-                                self.reversed ^=
-                                    ui.button(if self.reversed { "⬆" } else { "⬇" }).clicked();
-                            },
-                        );
-                    });
-                    header.col(|ui| {
-                        ui.strong("Clipped text");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Expanding content");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Interaction");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Content");
-                    });
-                })
-                .body(|mut body| match self.demo {
-                    DemoType::Manual => {
-                        for row_index in 0..NUM_MANUAL_ROWS {
-                            let row_index = if self.reversed {
-                                NUM_MANUAL_ROWS - 1 - row_index
-                            } else {
-                                row_index
-                            };
+                header.col(|ui| {
+                    ui.strong("Player 2");
+                });
+                header.col(|ui| {
+                    ui.strong("Result");
+                });
+                header.col(|ui| {
+                    ui.strong("Stage");
+                });
+                header.col(|ui| {
+                    ui.strong("Date");
+                });
+                header.col(|ui| {
+                    ui.strong("Duration");
+                });
+                header.col(|ui| {
+                    ui.strong("Opponent Rank");
+                });
+            })
+            .body(|mut body| {
+                let replays = &self.replay_analyzer.replays;
+                let connect_code = &self.connect_code;
+                let mut rows_to_toggle = Vec::new();
 
-                            let is_thick = thick_row(row_index);
-                            let row_height = if is_thick { 30.0 } else { 18.0 };
-                            body.row(row_height, |mut row| {
-                                row.set_selected(self.selection.contains(&row_index));
-
-                                row.col(|ui| {
-                                    ui.label(row_index.to_string());
-                                });
-                                row.col(|ui| {
-                                    ui.label(long_text(row_index));
-                                });
-                                row.col(|ui| {
-                                    expanding_content(ui);
-                                });
-                                row.col(|ui| {
-                                    ui.checkbox(&mut self.checked, "Click me");
-                                });
-                                row.col(|ui| {
-                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                                    if is_thick {
-                                        ui.heading("Extra thick row");
-                                    } else {
-                                        ui.label("Normal row");
-                                    }
-                                });
-
-                                self.toggle_row_selection(row_index, &row.response());
-                            });
-                        }
-                    }
-                    DemoType::ManyHomogeneous => {
-                        body.rows(text_height, self.num_rows, |mut row| {
-                            let row_index = if self.reversed {
-                                self.num_rows - 1 - row.index()
-                            } else {
-                                row.index()
-                            };
-
-                            row.set_selected(self.selection.contains(&row_index));
-
-                            row.col(|ui| {
-                                ui.label(row_index.to_string());
-                            });
-                            row.col(|ui| {
-                                ui.label(long_text(row_index));
-                            });
-                            row.col(|ui| {
-                                expanding_content(ui);
-                            });
-                            row.col(|ui| {
-                                ui.checkbox(&mut self.checked, "Click me");
-                            });
-                            row.col(|ui| {
-                                ui.add(
-                                    egui::Label::new("Thousands of rows of even height")
-                                        .wrap_mode(TextWrapMode::Extend),
-                                );
-                            });
-
-                            self.toggle_row_selection(row_index, &row.response());
+                if replays.is_empty() {
+                    // Show helpful message when no replays are loaded
+                    body.row(30.0, |mut row| {
+                        row.col(|ui| {
+                            ui.label("");
                         });
-                    }
-                    DemoType::ManyHeterogenous => {
-                        let row_height = |i: usize| if thick_row(i) { 30.0 } else { 18.0 };
-                        body.heterogeneous_rows((0..self.num_rows).map(row_height), |mut row| {
-                            let row_index = if self.reversed {
-                                self.num_rows - 1 - row.index()
-                            } else {
-                                row.index()
-                            };
+                        row.col(|ui| {
+                            ui.label("");
+                        });
+                        row.col(|ui| {
+                            ui.colored_label(egui::Color32::GRAY, "No replays loaded. Browse to your Slippi directory and click 'Scan Replays'");
+                        });
+                        row.col(|ui| {
+                            ui.label("");
+                        });
+                        row.col(|ui| {
+                            ui.label("");
+                        });
+                        row.col(|ui| {
+                            ui.label("");
+                        });
+                        row.col(|ui| {
+                            ui.label("");
+                        });
+                    });
+                }
 
-                            row.set_selected(self.selection.contains(&row_index));
+                for (row_index, replay) in replays.iter().enumerate() {
+                    body.row(text_height, |mut row| {
+                        row.set_selected(self.selection.contains(&row_index));
 
-                            row.col(|ui| {
-                                ui.label(row_index.to_string());
-                            });
-                            row.col(|ui| {
-                                ui.label(long_text(row_index));
-                            });
-                            row.col(|ui| {
-                                expanding_content(ui);
-                            });
-                            row.col(|ui| {
-                                ui.checkbox(&mut self.checked, "Click me");
-                            });
-                            row.col(|ui| {
-                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                                if thick_row(row_index) {
-                                    ui.heading("Extra thick row");
-                                } else {
-                                    ui.label("Normal row");
+                        row.col(|ui| {
+                            ui.label(&replay.player1.name);
+                        });
+                        row.col(|ui| {
+                            ui.label(&replay.player2.name);
+                        });
+                        row.col(|ui| {
+                            let (result_text, color) = match &replay.result {
+                                GameResult::Player1Won => {
+                                    if !connect_code.is_empty()
+                                        && replay.player1.name == *connect_code
+                                    {
+                                        ("WIN", egui::Color32::GREEN)
+                                    } else if !connect_code.is_empty()
+                                        && replay.player2.name == *connect_code
+                                    {
+                                        ("LOSS", egui::Color32::RED)
+                                    } else {
+                                        ("P1 Win", egui::Color32::GRAY)
+                                    }
                                 }
-                            });
-
-                            self.toggle_row_selection(row_index, &row.response());
+                                GameResult::Player2Won => {
+                                    if !connect_code.is_empty()
+                                        && replay.player2.name == *connect_code
+                                    {
+                                        ("WIN", egui::Color32::GREEN)
+                                    } else if !connect_code.is_empty()
+                                        && replay.player1.name == *connect_code
+                                    {
+                                        ("LOSS", egui::Color32::RED)
+                                    } else {
+                                        ("P2 Win", egui::Color32::GRAY)
+                                    }
+                                }
+                                GameResult::Unknown => ("Unknown", egui::Color32::YELLOW),
+                            };
+                            ui.colored_label(color, result_text);
                         });
+                        row.col(|ui| {
+                            ui.label(&replay.stage_name);
+                        });
+                        row.col(|ui| {
+                            let date_text = if let Some(date) = replay.date {
+                                format_date(date)
+                            } else {
+                                "Unknown".to_string()
+                            };
+                            ui.label(date_text);
+                        });
+                        row.col(|ui| {
+                            let duration_text = if let Some(duration_frames) = replay.duration {
+                                format_duration(duration_frames)
+                            } else {
+                                "Unknown".to_string()
+                            };
+                            ui.label(duration_text);
+                        });
+                        row.col(|ui| {
+                            // Show opponent rank based on who the user is
+                            let opponent_name = if !connect_code.is_empty() {
+                                if replay.player1.name == *connect_code {
+                                    &replay.player2.name
+                                } else if replay.player2.name == *connect_code {
+                                    &replay.player1.name
+                                } else {
+                                    "N/A"
+                                }
+                            } else {
+                                "N/A"
+                            };
+
+                            let rank_text = if opponent_name != "N/A" {
+                                // Check if this is the most recent replay and if rank lookup was performed
+                                if row_index == 0 {
+                                    replay.opponent_rank.as_deref().unwrap_or("Unknown")
+                                } else {
+                                    "Unknown"
+                                }
+                            } else {
+                                "N/A"
+                            };
+
+                            // Display icon and rank text horizontally
+                            ui.horizontal(|ui| {
+                                // Show rank icon if available
+                                if let Some(icon_texture) = self.rank_icons.get(rank_text) {
+                                    ui.add(egui::Image::from_texture(icon_texture).max_size(egui::Vec2::new(20.0, 20.0)));
+                                }
+                                ui.label(rank_text);
+                            });
+                        });
+
+                        if row.response().clicked() {
+                            rows_to_toggle.push(row_index);
+                        }
+                    });
+                }
+
+                // Handle row selection after the iteration
+                for row_index in rows_to_toggle {
+                    if self.selection.contains(&row_index) {
+                        self.selection.remove(&row_index);
+                    } else {
+                        self.selection.insert(row_index);
                     }
-                    DemoType::ReplayData => {
-                        // This case is handled above
-                    }
-                });
-        }
+                }
+            });
     }
 
-    fn toggle_row_selection(&mut self, row_index: usize, row_response: &egui::Response) {
-        if row_response.clicked() {
-            if self.selection.contains(&row_index) {
-                self.selection.remove(&row_index);
-            } else {
-                self.selection.insert(row_index);
-            }
-        }
-    }
+    // fn toggle_row_selection(&mut self, row_index: usize, row_response: &egui::Response) {
+    //     if row_response.clicked() {
+    //         if self.selection.contains(&row_index) {
+    //             self.selection.remove(&row_index);
+    //         } else {
+    //             self.selection.insert(row_index);
+    //         }
+    //     }
+    // }
 }
-
-// Helper constant & functions (NUM_MANUAL_ROWS, expanding_content, long_text, etc.)
-// have been moved to `crate::ui::helpers`.
