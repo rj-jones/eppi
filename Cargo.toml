@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["rj-jones <rjjones@fastmail.com>"]
 edition = "2021"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
-rust-version = "1.81"
+rust-version = "1.84"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -13,8 +13,11 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 [dependencies]
 anyhow = "1.0.98"
 peppi = "2.1.0"
-egui = "0.31"
-eframe = { version = "0.31", default-features = false, features = [
+egui = { version = "0.31.1", default-features = false, features = [
+    "color-hex",
+] }
+egui_extras = { version = "0.31.1", features = ["image", "svg"] }
+eframe = { version = "0.31.1", default-features = false, features = [
     # "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -27,6 +30,12 @@ log = "0.4.27"
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
 egui_file = "0.22.1"
+rayon = "1.8.0"
+walkdir = "2.4.0"
+serde_json = "1.0.140"
+reqwest = { version = "0.12.20", features = ["json"] }
+scraper = "0.23.1"
+tokio = { version = "1.45.1", features = ["full"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
