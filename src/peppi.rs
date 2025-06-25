@@ -1,10 +1,13 @@
+use num_cpus;
 use peppi::game::immutable::Game;
 use peppi::game::Port;
 use peppi::io::slippi;
 use rayon::prelude::*;
+use rayon::slice::ParallelSliceMut;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
+use std::panic;
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
@@ -48,14 +51,15 @@ impl ReplayAnalyzer {
     }
 
     pub fn scan_directory(&mut self, dir_path: &str) -> io::Result<()> {
-        let mut replays: Vec<ReplayInfo> = WalkDir::new(dir_path)
+        // First, collect all .slp files
+        let slp_files: Vec<_> = WalkDir::new(dir_path)
             .into_iter()
             .filter_map(|e| {
                 if let Ok(entry) = e {
                     if entry.path().is_file()
                         && entry.path().extension().and_then(|s| s.to_str()) == Some("slp")
                     {
-                        Some(entry)
+                        Some(entry.path().to_path_buf())
                     } else {
                         None
                     }
@@ -63,17 +67,38 @@ impl ReplayAnalyzer {
                     None
                 }
             })
-            .par_bridge()
-            .filter_map(|entry| {
-                let path = entry.path();
-                let file_path = path.to_str().unwrap().to_string();
-
-                parse_replay(&file_path).ok()
-            })
             .collect();
 
-        // Sort by date (newest first)
-        replays.sort_by(|a, b| {
+        println!("Found {} .slp files to process", slp_files.len());
+
+        // Build a rayon pool with physical core count to avoid hyper-thread oversubscription
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_cpus::get_physical())
+            .build()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Thread-pool error: {e}")))?;
+
+        // Process files with panic handling on the pool
+        let mut replays: Vec<ReplayInfo> = pool.install(|| {
+            slp_files
+                .into_par_iter()
+                .filter_map(|path| {
+                    let file_path = path.to_str()?.to_string();
+
+                    // Use catch_unwind to handle panics from corrupt replay files
+                    let result = panic::catch_unwind(|| parse_replay(&file_path));
+
+                    match result {
+                        Ok(Ok(replay_info)) => Some(replay_info),
+                        _ => None, // Skip files that error or panic
+                    }
+                })
+                .collect()
+        });
+
+        println!("Successfully parsed {} replays", replays.len());
+
+        // Sort by date (newest first) in parallel
+        replays.par_sort_unstable_by(|a, b| {
             match (a.date, b.date) {
                 (Some(date_a), Some(date_b)) => date_b.cmp(&date_a), // Newer first
                 (Some(_), None) => std::cmp::Ordering::Less,         // Files with dates come first

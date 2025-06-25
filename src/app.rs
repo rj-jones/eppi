@@ -53,6 +53,8 @@ pub struct Eppi {
     #[serde(skip)]
     rank_receiver: Option<mpsc::Receiver<(String, Result<String, String>)>>,
     #[serde(skip)]
+    scan_receiver: Option<mpsc::Receiver<Result<ReplayAnalyzer, String>>>,
+    #[serde(skip)]
     rank_icons: HashMap<String, TextureHandle>,
 }
 
@@ -80,6 +82,7 @@ impl Default for Eppi {
             scan_status: "Ready".to_string(),
             is_fetching_rank: false,
             rank_receiver: None,
+            scan_receiver: None,
             rank_icons: HashMap::new(),
         }
     }
@@ -108,23 +111,35 @@ impl Eppi {
         app
     }
 
-    fn scan_replays(&mut self) {
+    fn scan_replays(&mut self, ctx: &egui::Context) {
         if !self.replay_dir.is_empty() && !self.is_scanning {
             self.is_scanning = true;
             self.scan_status = "Scanning replays...".to_string();
 
-            // Note: In a real app, this should be done on a separate thread
-            // For now, we'll do it synchronously but this might freeze the UI
-            match self.replay_analyzer.scan_directory(&self.replay_dir) {
-                Ok(_) => {
-                    self.scan_status =
-                        format!("Found {} replays", self.replay_analyzer.replays.len());
+            // Create channel for async communication
+            let (tx, rx) = mpsc::channel();
+            self.scan_receiver = Some(rx);
+
+            // Spawn async task for scanning
+            let replay_dir = self.replay_dir.clone();
+            let ctx_clone = ctx.clone();
+
+            tokio::spawn(async move {
+                // Adding a small delay to make the spinner visible for testing
+                // tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+                let mut analyzer = ReplayAnalyzer::new();
+                let result = match analyzer.scan_directory(&replay_dir) {
+                    Ok(_) => Ok(analyzer),
+                    Err(e) => Err(format!("Error: {e}")),
+                };
+
+                // Send result through channel
+                if tx.send(result).is_ok() {
+                    // Request repaint to update UI with the result
+                    ctx_clone.request_repaint();
                 }
-                Err(e) => {
-                    self.scan_status = format!("Error: {e}");
-                }
-            }
-            self.is_scanning = false;
+            });
         }
     }
 
@@ -262,6 +277,25 @@ impl eframe::App for Eppi {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check for scan results from async tasks
+        if let Some(receiver) = &self.scan_receiver {
+            if let Ok(result) = receiver.try_recv() {
+                match result {
+                    Ok(replay_analyzer) => {
+                        // Replace our analyzer with the one from the async task
+                        self.replay_analyzer = replay_analyzer;
+                        self.scan_status =
+                            format!("Found {} replays", self.replay_analyzer.replays.len());
+                    }
+                    Err(error_msg) => {
+                        self.scan_status = error_msg;
+                    }
+                }
+                self.is_scanning = false;
+                self.scan_receiver = None; // Clear the receiver
+            }
+        }
+
         // Check for rank lookup results from async tasks
         if let Some(receiver) = &self.rank_receiver {
             if let Ok((opponent_tag, result)) = receiver.try_recv() {
@@ -334,9 +368,14 @@ impl eframe::App for Eppi {
 
                 ui.add_enabled_ui(!self.is_scanning && !self.replay_dir.is_empty(), |ui| {
                     if ui.button("Scan Replays").clicked() {
-                        self.scan_replays();
+                        self.scan_replays(ctx);
                     }
                 });
+
+                // Show a loading spinner while scanning replays, similar to the opponent-rank lookup flow
+                if self.is_scanning {
+                    ui.spinner();
+                }
             });
 
             ui.horizontal(|ui| {
@@ -386,7 +425,7 @@ impl Eppi {
         // Always use striped rows, resizable columns and clickable rows.
         self.striped = true;
         self.resizable = true;
-        self.clickable = true;
+        self.clickable = false;
 
         // The demo modes have been removed ‑ we are always in replay-data mode.
         self.demo = DemoType::ReplayData;
