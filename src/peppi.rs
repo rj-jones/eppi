@@ -1,3 +1,4 @@
+use dirs;
 use num_cpus;
 use peppi::game::immutable::Game;
 use peppi::game::Port;
@@ -8,6 +9,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::panic;
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
@@ -51,13 +54,40 @@ impl ReplayAnalyzer {
     }
 
     pub fn scan_directory(&mut self, dir_path: &str) -> io::Result<()> {
-        // First, collect all .slp files
+        // Cache directory inside OS data dir (e.g. %APPDATA%/eppi)
+        let cache_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("eppi");
+        let cache_path = cache_dir.join("bad_replays.txt");
+
+        // Load bad-file cache if it exists
+        let mut bad_cache: std::collections::HashSet<String> =
+            if let Ok(contents) = fs::read_to_string(&cache_path) {
+                contents
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .map(|l| l.to_owned())
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
+
+        // Install a silent panic hook once to suppress per-file panic prints
+        static HOOK_SET: std::sync::Once = std::sync::Once::new();
+        HOOK_SET.call_once(|| {
+            let _ = panic::take_hook(); // drop the default that prints
+            panic::set_hook(Box::new(|_| {}));
+        });
+
+        // First, collect all .slp files, skipping those known to be bad
         let slp_files: Vec<_> = WalkDir::new(dir_path)
             .into_iter()
             .filter_map(|e| {
                 if let Ok(entry) = e {
                     if entry.path().is_file()
                         && entry.path().extension().and_then(|s| s.to_str()) == Some("slp")
+                        && !bad_cache.contains(entry.path().to_string_lossy().as_ref())
                     {
                         Some(entry.path().to_path_buf())
                     } else {
@@ -69,7 +99,7 @@ impl ReplayAnalyzer {
             })
             .collect();
 
-        println!("Found {} .slp files to process", slp_files.len());
+        log::info!("Found {} .slp files to process", slp_files.len());
 
         // Build a rayon pool with physical core count to avoid hyper-thread oversubscription
         let pool = rayon::ThreadPoolBuilder::new()
@@ -77,7 +107,8 @@ impl ReplayAnalyzer {
             .build()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Thread-pool error: {e}")))?;
 
-        // Process files with panic handling on the pool
+        let new_bad: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
         let mut replays: Vec<ReplayInfo> = pool.install(|| {
             slp_files
                 .into_par_iter()
@@ -89,13 +120,22 @@ impl ReplayAnalyzer {
 
                     match result {
                         Ok(Ok(replay_info)) => Some(replay_info),
-                        _ => None, // Skip files that error or panic
+                        _ => {
+                            if let Ok(mut vec) = new_bad.lock() {
+                                vec.push(file_path.clone());
+                            }
+                            None
+                        }
                     }
                 })
                 .collect()
         });
 
-        println!("Successfully parsed {} replays", replays.len());
+        let skipped_count = new_bad.lock().map(|v| v.len()).unwrap_or(0);
+        log::info!(
+            "Successfully parsed {} replays (skipped {skipped_count})",
+            replays.len()
+        );
 
         // Sort by date (newest first) in parallel
         replays.par_sort_unstable_by(|a, b| {
@@ -108,6 +148,35 @@ impl ReplayAnalyzer {
         });
 
         self.replays = replays;
+
+        let new_bad_vec = new_bad.into_inner().unwrap_or_default();
+
+        if !new_bad_vec.is_empty() {
+            // Ensure cache dir exists
+            if let Err(e) = fs::create_dir_all(&cache_dir) {
+                log::error!("Failed to create cache directory {:?}: {e}", cache_dir);
+            }
+            for p in new_bad_vec {
+                bad_cache.insert(p);
+            }
+            if let Some(parent) = cache_path.parent() {
+                if !parent.exists() {
+                    log::warn!("Parent directory {:?} does NOT exist – creating it", parent);
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        log::error!("Failed to create parent directory {:?}: {e}", parent);
+                    }
+                }
+            }
+            let data = bad_cache.into_iter().collect::<Vec<_>>().join("\n");
+            log::info!(
+                "Caching {skipped_count} bad replay paths to {:?}",
+                cache_path
+            );
+            if let Err(e) = fs::write(&cache_path, data) {
+                log::error!("Failed to update bad replay cache at {:?}: {e}", cache_path);
+            }
+        }
+
         Ok(())
     }
 
