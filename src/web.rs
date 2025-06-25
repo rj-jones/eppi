@@ -1,5 +1,3 @@
-use serde_json;
-
 /// Fetch a player's rank from the Slippi GraphQL API.
 ///
 /// This was previously defined in `peppi.rs`, but all HTTP / web

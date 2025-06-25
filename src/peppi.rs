@@ -1,5 +1,3 @@
-use dirs;
-use num_cpus;
 use peppi::game::immutable::Game;
 use peppi::game::Port;
 use peppi::io::slippi;
@@ -105,7 +103,7 @@ impl ReplayAnalyzer {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_cpus::get_physical())
             .build()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Thread-pool error: {e}")))?;
+            .map_err(|e| io::Error::other(format!("Thread-pool error: {e}")))?;
 
         let new_bad: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -154,26 +152,23 @@ impl ReplayAnalyzer {
         if !new_bad_vec.is_empty() {
             // Ensure cache dir exists
             if let Err(e) = fs::create_dir_all(&cache_dir) {
-                log::error!("Failed to create cache directory {:?}: {e}", cache_dir);
+                log::error!("Failed to create cache directory {cache_dir:?}: {e}");
             }
             for p in new_bad_vec {
                 bad_cache.insert(p);
             }
             if let Some(parent) = cache_path.parent() {
                 if !parent.exists() {
-                    log::warn!("Parent directory {:?} does NOT exist – creating it", parent);
+                    log::warn!("Parent directory {parent:?} does NOT exist – creating it");
                     if let Err(e) = fs::create_dir_all(parent) {
-                        log::error!("Failed to create parent directory {:?}: {e}", parent);
+                        log::error!("Failed to create parent directory {parent:?}: {e}");
                     }
                 }
             }
             let data = bad_cache.into_iter().collect::<Vec<_>>().join("\n");
-            log::info!(
-                "Caching {skipped_count} bad replay paths to {:?}",
-                cache_path
-            );
+            log::info!("Caching {skipped_count} bad replay paths to {cache_path:?}");
             if let Err(e) = fs::write(&cache_path, data) {
-                log::error!("Failed to update bad replay cache at {:?}: {e}", cache_path);
+                log::error!("Failed to update bad replay cache at {cache_path:?}: {e}");
             }
         }
 
