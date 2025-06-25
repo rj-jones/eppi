@@ -280,7 +280,7 @@ impl eframe::App for Eppi {
                         // Cache the error to avoid retrying
                         self.replay_analyzer
                             .rank_cache
-                            .insert(opponent_tag.clone(), "Unknown".to_string());
+                            .insert(opponent_tag.clone(), "Unranked".to_string());
                         self.scan_status =
                             format!("Failed to lookup rank for {opponent_tag}: {error_msg}");
                     }
@@ -587,9 +587,9 @@ impl Eppi {
                             let rank_text = if opponent_name != "N/A" {
                                 // Check if this is the most recent replay and if rank lookup was performed
                                 if row_index == 0 {
-                                    replay.opponent_rank.as_deref().unwrap_or("Unknown")
+                                    replay.opponent_rank.as_deref().unwrap_or("Unranked")
                                 } else {
-                                    "Unknown"
+                                    "Unranked"
                                 }
                             } else {
                                 "N/A"

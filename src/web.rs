@@ -64,8 +64,17 @@ pub async fn fetch_player_rank(
             if let Some(rating_ordinal) =
                 ranked_profile.get("ratingOrdinal").and_then(|r| r.as_f64())
             {
-                let rank = elo_to_rank(rating_ordinal as i32);
-                println!("✅ Found rank: {rank} (ELO: {rating_ordinal})");
+                let regional_placement = ranked_profile
+                    .get("dailyRegionalPlacement")
+                    .and_then(|p| p.as_i64())
+                    .unwrap_or(i64::MAX) as i32;
+                let global_placement = ranked_profile
+                    .get("dailyGlobalPlacement")
+                    .and_then(|p| p.as_i64())
+                    .unwrap_or(i64::MAX) as i32;
+
+                let rank = elo_to_rank(rating_ordinal as i32, regional_placement, global_placement);
+                println!("✅ Found rank: {rank} (ELO: {rating_ordinal}, Regional: {regional_placement}, Global: {global_placement})");
                 return Ok(rank);
             } else {
                 // Player has a ranked profile but no ratingOrdinal (e.g., unranked season)
@@ -96,26 +105,29 @@ pub async fn fetch_player_rank(
 }
 
 /// Convert an ELO value into the human-readable rank string used by Slippi.
-fn elo_to_rank(elo: i32) -> String {
-    match elo {
-        0..=765 => "Bronze 1".to_string(),
-        766..=913 => "Bronze 2".to_string(),
-        914..=1054 => "Bronze 3".to_string(),
-        1055..=1188 => "Silver 1".to_string(),
-        1189..=1315 => "Silver 2".to_string(),
-        1316..=1436 => "Silver 3".to_string(),
-        1437..=1546 => "Gold 1".to_string(),
-        1547..=1654 => "Gold 2".to_string(),
-        1655..=1751 => "Gold 3".to_string(),
-        1752..=1842 => "Platinum 1".to_string(),
-        1843..=1927 => "Platinum 2".to_string(),
-        1928..=2003 => "Platinum 3".to_string(),
-        2004..=2074 => "Diamond 1".to_string(),
-        2075..=2136 => "Diamond 2".to_string(),
-        2137..=2191 => "Diamond 3".to_string(),
-        2192..=2274 => "Master 1".to_string(),
-        2275..=2350 => "Master 2".to_string(),
-        2351..=2999 => "Master 3".to_string(),
-        _ => "Grandmaster".to_string(),
+fn elo_to_rank(rating: i32, regional_placement: i32, global_placement: i32) -> String {
+    match rating {
+        r if r < 766 => "Bronze 1".to_string(),
+        r if r < 914 => "Bronze 2".to_string(),
+        r if r < 1055 => "Bronze 3".to_string(),
+        r if r < 1189 => "Silver 1".to_string(),
+        r if r < 1316 => "Silver 2".to_string(),
+        r if r < 1436 => "Silver 3".to_string(),
+        r if r < 1549 => "Gold 1".to_string(),
+        r if r < 1654 => "Gold 2".to_string(),
+        r if r < 1752 => "Gold 3".to_string(),
+        r if r < 1843 => "Platinum 1".to_string(),
+        r if r < 1928 => "Platinum 2".to_string(),
+        r if r < 2004 => "Platinum 3".to_string(),
+        r if r < 2074 => "Diamond 1".to_string(),
+        r if r < 2137 => "Diamond 2".to_string(),
+        r if r < 2192 => "Diamond 3".to_string(),
+        r if r >= 2192 && (regional_placement <= 100 || global_placement <= 300) => {
+            "Grandmaster".to_string()
+        }
+        r if r < 2275 => "Master 1".to_string(),
+        r if r < 2350 => "Master 2".to_string(),
+        r if r >= 2350 => "Master 3".to_string(),
+        _ => "Unranked".to_string(),
     }
 }
