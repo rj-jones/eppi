@@ -1,6 +1,8 @@
 use eframe::egui;
+use egui::TextureHandle;
 use egui::{TextStyle, TextWrapMode};
 use egui_file::FileDialog;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
@@ -50,6 +52,8 @@ pub struct Eppi {
     is_fetching_rank: bool,
     #[serde(skip)]
     rank_receiver: Option<mpsc::Receiver<(String, Result<String, String>)>>,
+    #[serde(skip)]
+    rank_icons: HashMap<String, TextureHandle>,
 }
 
 impl Default for Eppi {
@@ -76,6 +80,7 @@ impl Default for Eppi {
             scan_status: "Ready".to_string(),
             is_fetching_rank: false,
             rank_receiver: None,
+            rank_icons: HashMap::new(),
         }
     }
 }
@@ -96,6 +101,9 @@ impl Eppi {
 
         // Always start in replay data mode
         app.demo = DemoType::ReplayData;
+
+        // Load rank icons
+        app.load_rank_icons(&cc.egui_ctx);
 
         app
     }
@@ -171,6 +179,78 @@ impl Eppi {
             });
 
             self.scan_status = format!("Looking up rank for {}...", opponent_tag);
+        }
+    }
+
+    fn rank_to_icon_path(rank: &str) -> Option<String> {
+        // Map rank strings to icon file names
+        let icon_name = match rank {
+            // Handle various rank formats
+            rank if rank.starts_with("Bronze") => rank.replace("Bronze", "BRONZE"),
+            rank if rank.starts_with("Silver") => rank.replace("Silver", "SILVER"),
+            rank if rank.starts_with("Gold") => rank.replace("Gold", "GOLD"),
+            rank if rank.starts_with("Platinum") => rank.replace("Platinum", "PLATINUM"),
+            rank if rank.starts_with("Diamond") => rank.replace("Diamond", "DIAMOND"),
+            rank if rank.starts_with("Master") => rank.replace("Master", "MASTER"),
+            "Grandmaster" => "GRANDMASTER".to_string(),
+            "Unranked" => "UNRANKED".to_string(),
+            "Unknown" => "undefined".to_string(),
+            _ => return None,
+        };
+
+        Some(format!("assets/rank-icons/{}.svg", icon_name))
+    }
+
+    fn load_rank_icons(&mut self, ctx: &egui::Context) {
+        // List of all rank names that might appear
+        let ranks = vec![
+            "Bronze 1",
+            "Bronze 2",
+            "Bronze 3",
+            "Silver 1",
+            "Silver 2",
+            "Silver 3",
+            "Gold 1",
+            "Gold 2",
+            "Gold 3",
+            "Platinum 1",
+            "Platinum 2",
+            "Platinum 3",
+            "Diamond 1",
+            "Diamond 2",
+            "Diamond 3",
+            "Master 1",
+            "Master 2",
+            "Master 3",
+            "Grandmaster",
+            "Unranked",
+            "Unknown",
+        ];
+
+        for rank in ranks {
+            if let Some(icon_path) = Self::rank_to_icon_path(rank) {
+                // Try to load the SVG file
+                if let Ok(svg_bytes) = std::fs::read(&icon_path) {
+                    // Load SVG as an image
+                    let image = egui_extras::image::load_svg_bytes(&svg_bytes);
+
+                    match image {
+                        Ok(color_image) => {
+                            let texture = ctx.load_texture(
+                                format!("rank_{}", rank.replace(' ', "_")),
+                                color_image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.rank_icons.insert(rank.to_string(), texture);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to load rank icon {}: {}", icon_path, e);
+                        }
+                    }
+                } else {
+                    eprintln!("Failed to read rank icon file: {}", icon_path);
+                }
+            }
         }
     }
 }
@@ -439,7 +519,7 @@ impl Eppi {
                 .column(Column::auto().at_least(120.0)) // Stage
                 .column(Column::auto().at_least(80.0)) // Date
                 .column(Column::auto().at_least(70.0)) // Duration
-                .column(Column::auto().at_least(90.0)) // Opponent Rank
+                .column(Column::auto().at_least(120.0)) // Opponent Rank
                 .min_scrolled_height(0.0)
                 .max_scroll_height(available_height)
         } else {
@@ -616,7 +696,14 @@ impl Eppi {
                                     "N/A"
                                 };
 
-                                ui.label(rank_text);
+                                // Display icon and rank text horizontally
+                                ui.horizontal(|ui| {
+                                    // Show rank icon if available
+                                    if let Some(icon_texture) = self.rank_icons.get(rank_text) {
+                                        ui.add(egui::Image::from_texture(icon_texture).max_size(egui::Vec2::new(20.0, 20.0)));
+                                    }
+                                    ui.label(rank_text);
+                                });
                             });
 
                             if row.response().clicked() {
