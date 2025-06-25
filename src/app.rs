@@ -258,11 +258,11 @@ impl Eppi {
                             self.rank_icons.insert(rank.to_string(), texture);
                         }
                         Err(e) => {
-                            eprintln!("Failed to load rank icon {icon_path}: {e}");
+                            log::error!("Failed to load rank icon {icon_path}: {e}");
                         }
                     }
                 } else {
-                    eprintln!("Failed to read rank icon file: {icon_path}");
+                    log::error!("Failed to read rank icon file: {icon_path}");
                 }
             }
         }

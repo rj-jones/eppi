@@ -9,7 +9,7 @@ use serde_json;
 pub async fn fetch_player_rank(
     player_tag: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    println!("🌐 Fetching rank for player: {player_tag} via Slippi GraphQL API");
+    log::info!("🌐 Fetching rank for player: {player_tag} via Slippi GraphQL API");
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
@@ -47,16 +47,16 @@ pub async fn fetch_player_rank(
         .send()
         .await?;
 
-    println!("📡 GraphQL Status: {}", response.status());
+    log::debug!("📡 GraphQL Status: {}", response.status());
 
     let response_text = response.text().await?;
-    println!("📄 Response length: {} characters", response_text.len());
+    log::debug!("📄 Response length: {} characters", response_text.len());
 
     // Parse JSON response
     let json_response: serde_json::Value = serde_json::from_str(&response_text)?;
 
-    println!("🔍 Parsing GraphQL response...");
-    println!("Full JSON response: {json_response}"); // Debugging: print full JSON
+    log::debug!("🔍 Parsing GraphQL response...");
+    log::debug!("Full JSON response: {json_response}");
 
     // Extract player data from the response
     if let Some(user_data) = json_response.get("data").and_then(|d| d.get("getUser")) {
@@ -74,11 +74,11 @@ pub async fn fetch_player_rank(
                     .unwrap_or(i64::MAX) as i32;
 
                 let rank = elo_to_rank(rating_ordinal as i32, regional_placement, global_placement);
-                println!("✅ Found rank: {rank} (ELO: {rating_ordinal}, Regional: {regional_placement}, Global: {global_placement})");
+                log::info!("✅ Found rank: {rank} (ELO: {rating_ordinal}, Regional: {regional_placement}, Global: {global_placement})");
                 return Ok(rank);
             } else {
                 // Player has a ranked profile but no ratingOrdinal (e.g., unranked season)
-                println!("⚠️  Player has ranked profile but no ratingOrdinal.");
+                log::warn!("⚠️  Player has ranked profile but no ratingOrdinal.");
                 if let Some(display_name) = user_data.get("displayName").and_then(|n| n.as_str()) {
                     return Ok(format!("{display_name} (Unranked Season)"));
                 }
@@ -87,7 +87,7 @@ pub async fn fetch_player_rank(
 
         // Check if player exists but has no ranked data (not even a profile)
         if let Some(display_name) = user_data.get("displayName").and_then(|n| n.as_str()) {
-            println!(
+            log::warn!(
                 "⚠️  Player '{display_name}' found but has no ranked netplay profile (or no ratingOrdinal)."
             );
             return Ok("Unranked".to_string());
@@ -96,11 +96,11 @@ pub async fn fetch_player_rank(
 
     // Check for errors in the response (e.g., player not found)
     if let Some(errors) = json_response.get("errors") {
-        println!("❌ GraphQL errors: {errors}");
+        log::error!("❌ GraphQL errors: {errors}");
         return Err(format!("GraphQL API returned errors: {errors}").into());
     }
 
-    println!("❌ Player not found or no ranking data available in response: {json_response}");
+    log::error!("❌ Player not found or no ranking data available in response: {json_response}");
     Err("Player not found or no ranking data available".into())
 }
 
