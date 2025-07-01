@@ -143,28 +143,27 @@ impl Eppi {
         }
     }
 
-    fn lookup_opponent_rank(&mut self, ctx: &egui::Context) {
-        if !self.connect_code.is_empty()
-            && !self.is_fetching_rank
-            && !self.replay_analyzer.replays.is_empty()
-        {
+    fn lookup_opponent_rank(&mut self, ctx: &egui::Context, opponent_tag: String) {
+        if !self.is_fetching_rank {
             self.is_fetching_rank = true;
             self.scan_status = "Looking up opponent rank...".to_string();
-
-            // Get the opponent from the most recent replay
-            let most_recent_replay = &self.replay_analyzer.replays[0];
-            let opponent_tag = if most_recent_replay.player1.name == self.connect_code {
-                most_recent_replay.player2.name.clone()
-            } else {
-                most_recent_replay.player1.name.clone()
-            };
 
             // Check if we already have this opponent's rank cached
             let cached_rank = self.replay_analyzer.get_cached_rank(&opponent_tag).cloned();
             if let Some(cached_rank) = cached_rank {
-                // Update the most recent replay with cached rank
-                if let Some(first_replay) = self.replay_analyzer.replays.get_mut(0) {
-                    first_replay.opponent_rank = Some(cached_rank.clone());
+                // Update all replays with this opponent with cached rank
+                for replay in &mut self.replay_analyzer.replays {
+                    let replay_opponent = if replay.player1.name == self.connect_code {
+                        &replay.player2.name
+                    } else if replay.player2.name == self.connect_code {
+                        &replay.player1.name
+                    } else {
+                        continue;
+                    };
+
+                    if replay_opponent == &opponent_tag {
+                        replay.opponent_rank = Some(cached_rank.clone());
+                    }
                 }
                 self.scan_status = format!("Found cached rank for {opponent_tag}: {cached_rank}");
                 self.is_fetching_rank = false;
@@ -301,12 +300,24 @@ impl eframe::App for Eppi {
             if let Ok((opponent_tag, result)) = receiver.try_recv() {
                 match result {
                     Ok(rank) => {
-                        // Update cache and most recent replay
+                        // Update cache and all replays with this opponent
                         self.replay_analyzer
                             .rank_cache
                             .insert(opponent_tag.clone(), rank.clone());
-                        if let Some(first_replay) = self.replay_analyzer.replays.get_mut(0) {
-                            first_replay.opponent_rank = Some(rank.clone());
+
+                        // Update all replays that have this opponent
+                        for replay in &mut self.replay_analyzer.replays {
+                            let replay_opponent = if replay.player1.name == self.connect_code {
+                                &replay.player2.name
+                            } else if replay.player2.name == self.connect_code {
+                                &replay.player1.name
+                            } else {
+                                continue;
+                            };
+
+                            if replay_opponent == &opponent_tag {
+                                replay.opponent_rank = Some(rank.clone());
+                            }
                         }
                         self.scan_status = format!("Found rank for {opponent_tag}: {rank}");
                     }
@@ -385,19 +396,6 @@ impl eframe::App for Eppi {
                 }
                 ui.label(&self.scan_status);
 
-                ui.separator();
-
-                ui.add_enabled_ui(
-                    !self.is_fetching_rank
-                        && !self.connect_code.is_empty()
-                        && !self.replay_analyzer.replays.is_empty(),
-                    |ui| {
-                        if ui.button("Lookup Opponent Rank").clicked() {
-                            self.lookup_opponent_rank(ctx);
-                        }
-                    },
-                );
-
                 if self.is_fetching_rank {
                     ui.spinner();
                 }
@@ -413,7 +411,7 @@ impl eframe::App for Eppi {
 
             ui.separator();
 
-            self.replays_table(ui);
+            self.replays_table(ui, ctx);
 
             egui::warn_if_debug_build(ui);
         });
@@ -421,7 +419,7 @@ impl eframe::App for Eppi {
 }
 
 impl Eppi {
-    fn replays_table(&mut self, ui: &mut egui::Ui) {
+    fn replays_table(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         // Always use striped rows, resizable columns and clickable rows.
         self.striped = true;
         self.resizable = true;
@@ -452,11 +450,11 @@ impl Eppi {
 
         // The table itself
         egui::ScrollArea::horizontal().show(ui, |ui| {
-            self.table_ui(ui, /*reset=*/ false);
+            self.table_ui(ui, ctx, /*reset=*/ false);
         });
     }
 
-    fn table_ui(&mut self, ui: &mut egui::Ui, reset: bool) {
+    fn table_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reset: bool) {
         use egui_extras::{Column, TableBuilder};
 
         let text_height = egui::TextStyle::Body
@@ -520,6 +518,7 @@ impl Eppi {
                 let replays = &self.replay_analyzer.replays;
                 let connect_code = &self.connect_code;
                 let mut rows_to_toggle = Vec::new();
+                let mut ranks_to_fetch = Vec::new();
 
                 if replays.is_empty() {
                     // Show helpful message when no replays are loaded
@@ -613,35 +612,38 @@ impl Eppi {
                             // Show opponent rank based on who the user is
                             let opponent_name = if !connect_code.is_empty() {
                                 if replay.player1.name == *connect_code {
-                                    &replay.player2.name
+                                    Some(&replay.player2.name)
                                 } else if replay.player2.name == *connect_code {
-                                    &replay.player1.name
+                                    Some(&replay.player1.name)
                                 } else {
-                                    "N/A"
+                                    None
                                 }
                             } else {
-                                "N/A"
+                                None
                             };
 
-                            let rank_text = if opponent_name != "N/A" {
-                                // Check if this is the most recent replay and if rank lookup was performed
-                                if row_index == 0 {
-                                    replay.opponent_rank.as_deref().unwrap_or("Unranked")
+                            if let Some(opponent_name) = opponent_name {
+                                // Check if we have this opponent's rank cached
+                                if let Some(cached_rank) = self.replay_analyzer.get_cached_rank(opponent_name) {
+                                    // Display icon and rank text horizontally
+                                    ui.horizontal(|ui| {
+                                        // Show rank icon if available
+                                        if let Some(icon_texture) = self.rank_icons.get(cached_rank) {
+                                            ui.add(egui::Image::from_texture(icon_texture).max_size(egui::Vec2::new(20.0, 20.0)));
+                                        }
+                                        ui.label(cached_rank);
+                                    });
                                 } else {
-                                    "Unranked"
+                                    // Show fetch rank button if rank not cached
+                                    ui.add_enabled_ui(!self.is_fetching_rank, |ui| {
+                                        if ui.small_button("Fetch Rank").clicked() {
+                                            ranks_to_fetch.push(opponent_name.clone());
+                                        }
+                                    });
                                 }
                             } else {
-                                "N/A"
-                            };
-
-                            // Display icon and rank text horizontally
-                            ui.horizontal(|ui| {
-                                // Show rank icon if available
-                                if let Some(icon_texture) = self.rank_icons.get(rank_text) {
-                                    ui.add(egui::Image::from_texture(icon_texture).max_size(egui::Vec2::new(20.0, 20.0)));
-                                }
-                                ui.label(rank_text);
-                            });
+                                ui.label("N/A");
+                            }
                         });
 
                         if row.response().clicked() {
@@ -657,6 +659,12 @@ impl Eppi {
                     } else {
                         self.selection.insert(row_index);
                     }
+                }
+
+                // Handle rank fetching after the iteration
+                for opponent_name in ranks_to_fetch {
+                    self.lookup_opponent_rank(ctx, opponent_name);
+                    break; // Only fetch one rank at a time to avoid overwhelming the API
                 }
             });
     }
