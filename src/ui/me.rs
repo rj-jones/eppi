@@ -6,7 +6,7 @@
 
 use crate::app::{Data, Derived, display_rank};
 use crate::melee;
-use crate::model::{Filter, Game, Numbers, Outcome, Period, Row, set_score};
+use crate::model::{Game, Numbers, Outcome, Row, set_score};
 use crate::ui::theme::{self, Ion};
 use crate::ui::widgets;
 use eframe::egui::{self, Margin, RichText, vec2};
@@ -278,7 +278,6 @@ impl State {
         data: &Data,
         derived: &Derived,
         conn: Option<&rusqlite::Connection>,
-        filter: &mut Filter,
     ) {
         self.rebuild(data, derived);
         if data.me.is_empty() {
@@ -298,46 +297,7 @@ impl State {
                 egui::Frame::new()
                     .inner_margin(Margin::symmetric(20, 14))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for period in [
-                                Period::Today,
-                                Period::Week,
-                                Period::Month,
-                                Period::Year,
-                                Period::All,
-                            ] {
-                                let on = filter.season.is_none() && filter.period == period;
-                                if ui
-                                    .add(egui::Button::new(period.label()).selected(on))
-                                    .clicked()
-                                {
-                                    filter.period = period;
-                                    filter.season = None;
-                                }
-                            }
-                            if let Some(current) = data.seasons.iter().find(|s| s.is_current()) {
-                                let on = filter.season.as_ref().is_some_and(|s| s.id == current.id);
-                                if ui
-                                    .add(egui::Button::new("This season").selected(on))
-                                    .on_hover_text(format!(
-                                        "{}, since {}",
-                                        current.name,
-                                        crate::time::day_label(current.start)
-                                    ))
-                                    .clicked()
-                                {
-                                    filter.season = Some(current.into());
-                                    filter.period = Period::All;
-                                }
-                            }
-                            crate::ui::filter_bar::when_picker(
-                                ui,
-                                "me-when",
-                                filter,
-                                &data.seasons,
-                            );
-                        });
-                        ui.add_space(theme::space::M);
+                        // The filters above hold the period (and season).
                         self.tiles(ui);
                         ui.add_space(theme::space::L);
                         let wide = ui.available_width() > 900.0;

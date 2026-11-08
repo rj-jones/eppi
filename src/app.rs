@@ -74,7 +74,6 @@ impl View {
 pub struct Prefs {
     pub view: View,
     pub filter: Filter,
-    pub show_filters: bool,
     pub opponent_sort: opponents::Sort,
 }
 
@@ -215,6 +214,15 @@ impl Derived {
     }
 }
 
+/// Whether the Filters menu is open, and where its button and the menu
+/// were last drawn (a click outside both closes it).
+#[derive(Default)]
+struct FiltersMenu {
+    open: bool,
+    button: Option<egui::Rect>,
+    area: Option<egui::Rect>,
+}
+
 /// What a view asks the app to do.
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -245,6 +253,8 @@ pub enum Action {
     DemoSearch(String),
     /// The screenshot tour: show this tab of the open stats page.
     DemoStatsTab(&'static str),
+    /// The screenshot tour: open or close the Filters menu.
+    DemoFiltersMenu(bool),
 }
 
 struct Toast {
@@ -274,6 +284,8 @@ pub struct EppiApp {
     search: crate::ui::search::Search,
     /// Screenshot mode: (folder, views still to capture, frames to wait).
     screenshots: Option<crate::screenshot::Tour>,
+    /// The Filters button's menu.
+    filters_menu: FiltersMenu,
     /// Demo mode (`--showcase`): other players made anonymous.
     demo: bool,
 }
@@ -366,6 +378,7 @@ impl EppiApp {
             search: Default::default(),
             screenshots: tour,
             demo,
+            filters_menu: FiltersMenu::default(),
         };
         app.load_seasons();
         app.load_histories();
@@ -661,6 +674,7 @@ impl EppiApp {
                 Action::DemoLive(game) => {
                     self.data.live = game.map(|g| vec![*g]).unwrap_or_default()
                 }
+                Action::DemoFiltersMenu(open) => self.filters_menu.open = open,
                 Action::DemoStatsTab(tab) => {
                     if let Some(page) = &mut self.stats {
                         page.show_tab(tab);
@@ -775,9 +789,9 @@ impl EppiApp {
                             let button = egui::Button::new(theme::icon_label(
                                 Ion::FUNNEL,
                                 &label,
-                                // On the orange of an open bar, white reads;
+                                // On the orange of an open menu, white reads;
                                 // closed, orange says filters are on.
-                                if self.prefs.show_filters {
+                                if self.filters_menu.open {
                                     egui::Color32::WHITE
                                 } else if count > 0 {
                                     theme::ACCENT_TEXT
@@ -785,14 +799,14 @@ impl EppiApp {
                                     theme::TEXT
                                 },
                             ))
-                            .selected(self.prefs.show_filters);
-                            if ui
+                            .selected(self.filters_menu.open);
+                            let response = ui
                                 .add(button)
-                                .on_hover_text("Show or hide the filters")
-                                .clicked()
-                            {
-                                self.prefs.show_filters = !self.prefs.show_filters;
+                                .on_hover_text("Modes, opponents' ranks and which games to hide");
+                            if response.clicked() {
+                                self.filters_menu.open = !self.filters_menu.open;
                             }
+                            self.filters_menu.button = Some(response.rect);
                         }
                     }
 
@@ -1024,6 +1038,42 @@ impl EppiApp {
             });
     }
 
+    /// The Filters button's menu, under it, while open: closed by the
+    /// button, Esc, or a click anywhere else.
+    fn filters_menu(&mut self, ctx: &egui::Context) {
+        let menu = &mut self.filters_menu;
+        if !menu.open || !self.prefs.view.uses_filter() || self.stats.is_some() {
+            menu.open = false;
+            return;
+        }
+        let Some(button) = menu.button else { return };
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let clicked_away = ctx.input(|i| i.pointer.any_pressed())
+            && !ctx
+                .input(|i| i.pointer.interact_pos())
+                .is_some_and(|p| button.contains(p) || menu.area.is_some_and(|r| r.contains(p)));
+        if escape || clicked_away {
+            menu.open = false;
+            return;
+        }
+        let area = egui::Area::new(egui::Id::unique("filters-menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(button.left_bottom() + vec2(0.0, 6.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(theme::SIDEBAR)
+                    .corner_radius(8)
+                    .stroke(egui::Stroke::new(1.0, theme::SEPARATOR))
+                    .shadow(ui.visuals().popup_shadow)
+                    .inner_margin(Margin::same(14))
+                    .show(ui, |ui| {
+                        ui.set_max_width(460.0);
+                        filter_bar::menu(ui, &mut self.prefs.filter, &self.data);
+                    });
+            });
+        self.filters_menu.area = Some(area.response.rect);
+    }
+
     fn toasts(&mut self, ctx: &egui::Context) {
         self.toasts
             .retain(|t| t.since.elapsed() < Duration::from_secs(if t.error { 8 } else { 3 }));
@@ -1146,7 +1196,7 @@ impl eframe::App for EppiApp {
                     page.show(ui, &self.data, &mut actions);
                     return;
                 }
-                if view.uses_filter() && self.prefs.show_filters {
+                if view.uses_filter() {
                     filter_bar::show(ui, &mut self.prefs.filter, &self.data);
                 }
                 match view {
@@ -1164,13 +1214,9 @@ impl eframe::App for EppiApp {
                         &mut self.prefs.opponent_sort,
                         &mut actions,
                     ),
-                    View::Me => self.me.show(
-                        ui,
-                        &self.data,
-                        &self.derived,
-                        self.conn.as_ref(),
-                        &mut self.prefs.filter,
-                    ),
+                    View::Me => self
+                        .me
+                        .show(ui, &self.data, &self.derived, self.conn.as_ref()),
                     View::Highlights => self.highlights.show(
                         ui,
                         &self.data,
@@ -1186,6 +1232,7 @@ impl eframe::App for EppiApp {
                 }
             });
 
+        self.filters_menu(&ctx);
         self.toasts(&ctx);
         self.want_ranks();
         let mut tour_done = false;

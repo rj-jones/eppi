@@ -191,7 +191,7 @@ impl Tour {
                     if self.demo {
                         // From the defaults, not the owner's saved filters.
                         prefs.filter = crate::model::Filter::default();
-                        prefs.show_filters = false;
+                        actions.push(Action::DemoFiltersMenu(false));
                     }
                     // Show the details pane with something in it.
                     let latest = data.games.iter().find(|g| g.sides(&data.me).is_some());
@@ -224,7 +224,7 @@ impl Tour {
                 }
                 Step::Search(_) => {
                     prefs.filter.their_ranks.clear();
-                    prefs.show_filters = false;
+                    actions.push(Action::DemoFiltersMenu(false));
                     prefs.view = View::Replays;
                     actions.push(Action::DemoSearch(
                         if self.demo { "co" } else { "pin" }.into(),
@@ -236,7 +236,7 @@ impl Tour {
                     // Clears the search the step before typed, too.
                     prefs.filter = crate::model::Filter::default();
                     prefs.view = View::Replays;
-                    prefs.show_filters = true;
+                    actions.push(Action::DemoFiltersMenu(true));
                     prefs.filter.their_ranks = vec![crate::model::RankTier::Gold];
                 }
                 Step::StatsTab(tab, _) => {
