@@ -146,15 +146,11 @@ pub fn when_picker(ui: &mut egui::Ui, id: &str, filter: &mut Filter, seasons: &[
         });
 }
 
-/// "Their rank": a chip per tier, by the opponent's rank now.
+/// A chip per rank tier: games against opponents of the picked tiers.
 fn rank_chips(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
-    // As tall as the chips, so the label sits level with them.
-    let height = ui.spacing().interact_size.y;
-    ui.add_sized([0.0, height], egui::Label::new(theme::muted("Their rank")))
-        .on_hover_text(
-            "Your opponent's rank in the season you played them: how they finished it, \
-             or their rank now for this season. Games from before ranked (Dec 2022) don't match.",
-        );
+    const TIP: &str = "Only games against opponents of this rank, as they were in the season \
+         you played them (how they finished it, or their rank now for this season). Pick \
+         several to combine them. Games from before ranked (Dec 2022) don't match.";
     for tier in RankTier::ALL {
         let on = filter.their_ranks.contains(&tier);
         // On the orange of a picked chip, white reads; the icon carries
@@ -171,7 +167,7 @@ fn rank_chips(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
             ),
             None => egui::Button::new(text),
         };
-        if ui.add(button.selected(on)).clicked() {
+        if ui.add(button.selected(on)).on_hover_text(TIP).clicked() {
             if on {
                 filter.their_ranks.retain(|t| *t != tier);
             } else {
