@@ -775,7 +775,11 @@ impl EppiApp {
                             let button = egui::Button::new(theme::icon_label(
                                 Ion::FUNNEL,
                                 &label,
-                                if count > 0 {
+                                // On the orange of an open bar, white reads;
+                                // closed, orange says filters are on.
+                                if self.prefs.show_filters {
+                                    egui::Color32::WHITE
+                                } else if count > 0 {
                                     theme::ACCENT_TEXT
                                 } else {
                                     theme::TEXT
@@ -1218,7 +1222,15 @@ fn show_in_folder(path: &std::path::Path) {
             .arg(format!("/select,{}", path.display()))
             .spawn();
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Finder, with the file selected.
+        let _ = std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn();
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         if let Some(parent) = path.parent() {
             let _ = open::that(parent);

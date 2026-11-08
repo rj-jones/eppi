@@ -144,9 +144,13 @@ fn read_connect_code(path: &Path) -> Option<String> {
         .filter(|c| !c.is_empty())
 }
 
-/// Where Eppi keeps its database.
+/// Where Eppi keeps its database: beside eframe's saved state, whose
+/// folder is named after the app id (`eppi`). Windows ignores case, and the
+/// index there has always been in `Eppi`, so it keeps that spelling; a
+/// case-sensitive file system (Linux) would otherwise split the two.
 pub fn data_dir() -> PathBuf {
+    let name = if cfg!(windows) { "Eppi" } else { "eppi" };
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Eppi")
+        .join(name)
 }

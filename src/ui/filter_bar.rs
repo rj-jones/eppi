@@ -148,10 +148,13 @@ pub fn when_picker(ui: &mut egui::Ui, id: &str, filter: &mut Filter, seasons: &[
 
 /// "Their rank": a chip per tier, by the opponent's rank now.
 fn rank_chips(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
-    ui.label(theme::muted("Their rank")).on_hover_text(
-        "Your opponent's rank in the season you played them: how they finished it, \
+    // As tall as the chips, so the label sits level with them.
+    let height = ui.spacing().interact_size.y;
+    ui.add_sized([0.0, height], egui::Label::new(theme::muted("Their rank")))
+        .on_hover_text(
+            "Your opponent's rank in the season you played them: how they finished it, \
              or their rank now for this season. Games from before ranked (Dec 2022) don't match.",
-    );
+        );
     for tier in RankTier::ALL {
         let on = filter.their_ranks.contains(&tier);
         let text = egui::RichText::new(tier.label()).color(if on {

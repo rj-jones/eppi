@@ -39,6 +39,15 @@ pub fn game_started(game: &Game, opponent: &Player, data: &Data) {
     }
     let summary = format!("{} vs {}", game.mode.label(), opponent.display_name());
     std::thread::spawn(move || {
+        // From Eppi.app (scripts/install.sh), notifications are Eppi's own;
+        // a bare binary keeps macOS's default sender.
+        #[cfg(target_os = "macos")]
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| {
+                let _ = notify_rust::set_application("io.github.rj-jones.eppi");
+            });
+        }
         if let Err(e) = notify_rust::Notification::new()
             .summary(&summary)
             .body(&body)

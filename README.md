@@ -51,9 +51,16 @@ pwsh -File scripts\install.ps1              # builds, copies to %LOCALAPPDATA%\P
 pwsh -File scripts\install.ps1 -Uninstall   # removes both
 ```
 
-Or run it from the repo with `cargo run --release` (Rust 1.95 or newer). It also builds on macOS and Linux, but has only been tested on Windows so far.
+On macOS or Linux:
 
-The first time it starts, Eppi takes your connect code and replay folder from Slippi Launcher. In Settings, add alt codes so their games count as yours, and add every folder that holds replays. Folders inside each other are read once, and a replay copied into several places counts once. The index lives in `%LOCALAPPDATA%\Eppi`.
+```sh
+scripts/install.sh               # macOS: ~/Applications/Eppi.app; Linux: ~/.local/bin/eppi and an app menu entry
+scripts/install.sh --uninstall   # removes them
+```
+
+Or run it from the repo with `cargo run --release`. Eppi needs Rust 1.95 or newer; to build with it without changing your default toolchain, put `RUSTUP_TOOLCHAIN=1.95.0` in front of the command. Windows is where Eppi is used day to day. macOS has passed its build, tests and a run on an Apple Silicon Mac, but playing replays in Dolphin there hasn't been tried yet.
+
+The first time it starts, Eppi takes your connect code and replay folder from Slippi Launcher. In Settings, add alt codes so their games count as yours, and add every folder that holds replays. Folders inside each other are read once, and a replay copied into several places counts once. The index lives in `%LOCALAPPDATA%\Eppi` on Windows, `~/Library/Application Support/eppi` on macOS and `~/.local/share/eppi` on Linux.
 
 Ranks come from Slippi's servers: one request for up to 25 players, at most one a second, and each player at most once a day. You can turn lookups off in Settings.
 

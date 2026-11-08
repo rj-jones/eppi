@@ -436,7 +436,11 @@ fn empty_state(ui: &mut egui::Ui, data: &Data) {
             match data.progress.phase {
                 crate::library::Phase::Idle => (
                     "No replays yet",
-                    "Add your replay folder in Settings. Slippi saves them in Documents\\Slippi.",
+                    if cfg!(windows) {
+                        "Add your replay folder in Settings. Slippi saves them in Documents\\Slippi."
+                    } else {
+                        "Add your replay folder in Settings. Slippi saves them in Documents/Slippi."
+                    },
                 ),
                 _ => (
                     "Reading your replays…",

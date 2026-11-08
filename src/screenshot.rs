@@ -251,6 +251,14 @@ impl Tour {
                     }
                 }
             }
+            // No game to open (a machine without replays): no stats
+            // pictures, rather than copies of the replay list.
+            if matches!(step, Step::Stats(_) | Step::StatsTab(..)) && featured_game(data).is_none()
+            {
+                log::info!("no game with stats: skipped {step:?}");
+                self.steps.remove(0);
+                return self.steps.is_empty();
+            }
         }
         self.frames += 1;
         // Let images load and layouts settle before the capture.
