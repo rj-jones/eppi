@@ -241,6 +241,8 @@ pub enum Action {
     /// The screenshot tour: show a game as if it had just started (or
     /// stop showing it).
     DemoLive(Option<Box<Game>>),
+    /// The screenshot tour: type `String` into the search bar.
+    DemoSearch(String),
 }
 
 struct Toast {
@@ -267,10 +269,13 @@ pub struct EppiApp {
     stats: Option<stats_page::Page>,
     highlights: crate::ui::highlights::State,
     toasts: Vec<Toast>,
-    focus_search: bool,
+    search: crate::ui::search::Search,
     /// Screenshot mode: (folder, views still to capture, frames to wait).
     screenshots: Option<crate::screenshot::Tour>,
 }
+
+/// The navigation column's width.
+const NAV_WIDTH: f32 = 196.0;
 
 const SETTINGS_KEY: &str = "settings";
 const PREFS_KEY: &str = "prefs";
@@ -350,7 +355,7 @@ impl EppiApp {
             stats: None,
             highlights: Default::default(),
             toasts: Vec::new(),
-            focus_search: false,
+            search: Default::default(),
             screenshots: tour,
         };
         app.load_seasons();
@@ -626,6 +631,10 @@ impl EppiApp {
                 Action::DemoLive(game) => {
                     self.data.live = game.map(|g| vec![*g]).unwrap_or_default()
                 }
+                Action::DemoSearch(text) => {
+                    self.prefs.filter.search = text;
+                    self.search.focus = true;
+                }
                 Action::Rescan => {
                     let _ = self
                         .library
@@ -642,7 +651,7 @@ impl EppiApp {
             if input.consume_key(egui::Modifiers::COMMAND, K::K)
                 || (!typing && input.consume_key(egui::Modifiers::NONE, K::Slash))
             {
-                self.focus_search = true;
+                self.search.focus = true;
             }
             if input.consume_key(egui::Modifiers::COMMAND, K::R)
                 || input.consume_key(egui::Modifiers::NONE, K::F5)
@@ -713,31 +722,14 @@ impl EppiApp {
                         view.label()
                     };
                     ui.label(theme::heavy(title, theme::text::TITLE));
-                    ui.add_space(theme::space::L);
+                    // The search bar lines up with the content column under
+                    // it (past the nav, at the views' own margin).
+                    let content_left = NAV_WIDTH + theme::space::L;
+                    ui.add_space((content_left - ui.cursor().min.x).max(theme::space::L));
 
-                    if view.uses_filter() || view == View::Tonight {
-                        let search = egui::TextEdit::singleline(&mut self.prefs.filter.search)
-                            .id(egui::Id::unique("search"))
-                            .hint_text("Search players, characters, stages   /")
-                            .desired_width(ui.available_width().min(340.0))
-                            .margin(Margin::symmetric(10, 6));
-                        let response = ui.add(search);
-                        if std::mem::take(&mut self.focus_search) {
-                            response.request_focus();
-                        }
-                        if !self.prefs.filter.search.is_empty()
-                            && ui
-                                .add(
-                                    egui::Button::new(
-                                        Ion::CLOSE_CIRCLE.rich(16.0).color(theme::MUTED),
-                                    )
-                                    .frame(false),
-                                )
-                                .on_hover_text("Clear the search (Esc)")
-                                .clicked()
-                        {
-                            self.prefs.filter.search.clear();
-                        }
+                    if view != View::Settings {
+                        self.search
+                            .show(ui, &mut self.prefs.filter.search, &self.data, actions);
                         if view.uses_filter() {
                             let count = self.prefs.filter.active_count();
                             let label = if count > 0 {
@@ -846,7 +838,7 @@ impl EppiApp {
 
     fn nav(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         egui::Panel::left("nav")
-            .exact_size(196.0)
+            .exact_size(NAV_WIDTH)
             .show_separator_line(false)
             .frame(
                 egui::Frame::new()

@@ -89,15 +89,21 @@ pub struct Player {
     pub code: String,
     /// Netplay display name, empty offline.
     pub name: String,
+    /// The in-game name tag (offline and console games), empty without one.
+    #[serde(default)]
+    pub tag: String,
 }
 
 impl Player {
-    /// The name to show: the display name, else the code, else the port.
+    /// The name to show: the display name, else the code, else the name
+    /// tag, else the port.
     pub fn display_name(&self) -> String {
         if !self.name.is_empty() {
             self.name.clone()
         } else if !self.code.is_empty() {
             self.code.clone()
+        } else if !self.tag.is_empty() {
+            self.tag.clone()
         } else if self.cpu {
             "CPU".to_owned()
         } else {
@@ -564,7 +570,9 @@ impl Filter {
         if !needle.is_empty() {
             let needle = needle.to_lowercase();
             let hit = |p: &Player| {
-                p.code.to_lowercase().contains(&needle) || p.name.to_lowercase().contains(&needle)
+                p.code.to_lowercase().contains(&needle)
+                    || p.name.to_lowercase().contains(&needle)
+                    || p.tag.to_lowercase().contains(&needle)
             };
             let found = match sides {
                 Some(s) => hit(&game.players[s.opponent]),

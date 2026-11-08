@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     if let Some(dir) = path.parent() {
@@ -150,6 +150,11 @@ fn migrate_steps(conn: &Connection) -> rusqlite::Result<()> {
                 PRIMARY KEY (code, id)
             );",
         )?;
+    }
+    if version < 7 {
+        // Players' in-game name tags are read since 7 (the same games read
+        // again keep their stats).
+        conn.execute_batch("UPDATE games SET mtime = -1;")?;
     }
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;

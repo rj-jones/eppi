@@ -27,6 +27,8 @@ enum Step {
     Tall(View, &'static str),
     /// Replays against Gold players, once every opponent's rank is known.
     RankFilter(&'static str),
+    /// The search bar with its suggestions open.
+    Search(&'static str),
     Stats(&'static str),
 }
 
@@ -45,6 +47,7 @@ impl Tour {
                 Step::View(View::Highlights, "6-highlights"),
                 Step::View(View::Settings, "7-settings"),
                 Step::RankFilter("8-rank-filter"),
+                Step::Search("9-search"),
             ],
             frames: 0,
             started: None,
@@ -92,7 +95,8 @@ impl Tour {
                     Step::View(_, name)
                     | Step::Tall(_, name)
                     | Step::Stats(name)
-                    | Step::RankFilter(name),
+                    | Step::RankFilter(name)
+                    | Step::Search(name),
                 ) => *name,
                 None => "done",
             };
@@ -155,6 +159,12 @@ impl Tour {
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                         1360.0, 2300.0,
                     )));
+                }
+                Step::Search(_) => {
+                    prefs.filter.their_ranks.clear();
+                    prefs.show_filters = false;
+                    prefs.view = View::Replays;
+                    actions.push(Action::DemoSearch("pin".into()));
                 }
                 Step::RankFilter(_) => {
                     actions.push(Action::CloseStats);

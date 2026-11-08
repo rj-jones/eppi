@@ -121,6 +121,11 @@ fn summarize(
                 cpu: matches!(p.r#type, PlayerType::Cpu),
                 code: crate::model::normalize_code(&code),
                 name: name.trim().to_owned(),
+                tag: p
+                    .name_tag
+                    .as_ref()
+                    .map(|t| t.to_normalized().trim().to_owned())
+                    .unwrap_or_default(),
             }
         })
         .collect();
