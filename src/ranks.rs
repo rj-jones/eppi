@@ -17,8 +17,13 @@ const PACE: Duration = Duration::from_millis(1_100);
 enum Request {
     Fetch(Vec<String>),
     Seasons(String),
+    /// Every season of these players (for the rank filter).
+    Histories(Vec<String>),
     Shutdown,
 }
+
+/// A player's code and their seasons (`None`: no account has the code).
+pub type PlayerSeasons = (String, Option<Vec<crate::model::Season>>);
 
 /// What the worker found out.
 pub enum Reply {
@@ -29,6 +34,8 @@ pub enum Reply {
         code: String,
         result: Result<Vec<crate::model::Season>, String>,
     },
+    /// Players' seasons (`None`: no account has the code).
+    Histories(Result<Vec<PlayerSeasons>, String>),
 }
 
 pub struct RankService {
@@ -36,6 +43,8 @@ pub struct RankService {
     pub results: Receiver<Reply>,
     /// Codes asked for and not answered yet.
     pending: HashSet<String>,
+    /// Codes whose seasons were asked for and not answered yet.
+    pending_histories: HashSet<String>,
     /// When each code was last tried this run (failed lookups wait too).
     tried: HashMap<String, Instant>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -53,6 +62,7 @@ impl RankService {
             requests: request_tx,
             results: result_rx,
             pending: HashSet::new(),
+            pending_histories: HashSet::new(),
             tried: HashMap::new(),
             thread: Some(thread),
         }
@@ -101,6 +111,42 @@ impl RankService {
         let _ = self.requests.send(Request::Seasons(code.to_owned()));
     }
 
+    pub fn pending_count(&self) -> usize {
+        self.pending.len() + self.pending_histories.len()
+    }
+
+    /// Asks for every season of `codes` (those not asked for already).
+    pub fn want_histories<'a>(&mut self, codes: impl IntoIterator<Item = &'a str>) {
+        let batch: Vec<String> = codes
+            .into_iter()
+            .filter(|c| c.contains('#') && self.pending_histories.insert((*c).to_owned()))
+            .map(str::to_owned)
+            .collect();
+        if !batch.is_empty() {
+            let _ = self.requests.send(Request::Histories(batch));
+        }
+    }
+
+    pub fn histories_answered(&mut self, codes: impl IntoIterator<Item = String>) {
+        for code in codes {
+            self.pending_histories.remove(&code);
+        }
+    }
+
+    /// After a failed history request, those codes can be asked for again
+    /// (in a while: the app asks every frame, so it waits on `tried`).
+    pub fn histories_failed(&mut self) {
+        for code in self.pending_histories.drain() {
+            self.tried.insert(format!("history:{code}"), Instant::now());
+        }
+    }
+
+    pub fn history_recently_failed(&self, code: &str) -> bool {
+        self.tried
+            .get(&format!("history:{code}"))
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(600))
+    }
+
     pub fn answered(&mut self, records: &[RankRecord]) {
         for record in records {
             self.pending.remove(&record.code);
@@ -125,10 +171,11 @@ impl Drop for RankService {
 
 fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) {
     let mut queue: VecDeque<String> = VecDeque::new();
+    let mut histories: VecDeque<String> = VecDeque::new();
     let mut seasons: Option<String> = None;
     let mut next_request = Instant::now();
     loop {
-        let wait = if queue.is_empty() && seasons.is_none() {
+        let wait = if queue.is_empty() && histories.is_empty() && seasons.is_none() {
             Duration::from_secs(3_600)
         } else {
             next_request.saturating_duration_since(Instant::now())
@@ -144,6 +191,10 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
             }
             Ok(Request::Seasons(code)) => {
                 seasons = Some(code);
+                continue;
+            }
+            Ok(Request::Histories(codes)) => {
+                histories.extend(codes);
                 continue;
             }
             Ok(Request::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
@@ -162,6 +213,36 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
             continue;
         }
         if queue.is_empty() {
+            // Ranks on screen first; histories when nothing else waits.
+            if !histories.is_empty() {
+                let take = eppi_rank::BATCH_SIZE.min(histories.len());
+                let batch: Vec<String> = histories.drain(..take).collect();
+                let refs: Vec<&str> = batch.iter().map(String::as_str).collect();
+                next_request = Instant::now() + PACE;
+                let reply = match eppi_rank::fetch_histories(&refs) {
+                    Ok(found) => Ok(found
+                        .into_iter()
+                        .zip(&batch)
+                        .map(|((_, seasons), asked)| {
+                            (
+                                asked.clone(),
+                                seasons.map(|list| list.iter().map(season).collect()),
+                            )
+                        })
+                        .collect()),
+                    Err(error) => {
+                        if let Some(wait) = error.retry_after() {
+                            next_request = Instant::now() + wait;
+                        } else if error.is_rate_limited() {
+                            next_request = Instant::now() + Duration::from_secs(60);
+                        }
+                        histories.clear();
+                        Err(error.to_string())
+                    }
+                };
+                let _ = results.send(Reply::Histories(reply));
+                repaint();
+            }
             continue;
         }
         let take = eppi_rank::BATCH_SIZE.min(queue.len());

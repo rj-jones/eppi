@@ -3,7 +3,7 @@
 
 use crate::app::Data;
 use crate::melee;
-use crate::model::{Filter, Mode, Period, Season, SeasonFilter};
+use crate::model::{Filter, Mode, Period, RankTier, Season, SeasonFilter};
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui::{self, Margin, vec2};
@@ -46,6 +46,9 @@ pub fn show(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
                     &mut filter.their_character,
                 );
                 stage_picker(ui, &mut filter.stage);
+                ui.separator();
+                ui.end_row();
+                rank_chips(ui, filter, data);
                 ui.separator();
                 ui.checkbox(&mut filter.hide_short, "Hide short games")
                     .on_hover_text("Games under 30 seconds: disconnects, handwarmers, ragequits");
@@ -141,4 +144,44 @@ pub fn when_picker(ui: &mut egui::Ui, id: &str, filter: &mut Filter, seasons: &[
                 }
             }
         });
+}
+
+/// "Their rank": a chip per tier, by the opponent's rank now.
+fn rank_chips(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
+    ui.label(theme::muted("Their rank")).on_hover_text(
+        "Your opponent's rank in the season you played them: how they finished it, \
+             or their rank now for this season. Games from before ranked (Dec 2022) don't match.",
+    );
+    for tier in RankTier::ALL {
+        let on = filter.their_ranks.contains(&tier);
+        let text = egui::RichText::new(tier.label()).color(if on {
+            widgets::rank_color(tier.icon_rank())
+        } else {
+            theme::MUTED
+        });
+        let button = match widgets::rank_source(tier.icon_rank()) {
+            Some(icon) => egui::Button::image_and_text(
+                egui::Image::new(icon).fit_to_exact_size(vec2(16.0, 16.0)),
+                text,
+            ),
+            None => egui::Button::new(text),
+        };
+        if ui.add(button.selected(on)).clicked() {
+            if on {
+                filter.their_ranks.retain(|t| *t != tier);
+            } else {
+                filter.their_ranks.push(tier);
+            }
+        }
+    }
+    if !filter.their_ranks.is_empty() && data.ranks_pending > 0 {
+        ui.add(egui::Spinner::new().size(12.0));
+        ui.label(
+            theme::muted(format!(
+                "Looking up {} players' seasons…",
+                widgets::thousands(data.ranks_pending)
+            ))
+            .size(theme::text::SMALL),
+        );
+    }
 }

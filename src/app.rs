@@ -97,6 +97,13 @@ pub struct Data {
     pub folder_counts: Vec<(PathBuf, usize)>,
     /// The ranked seasons, newest first, with how I finished each.
     pub seasons: Vec<model::Season>,
+    /// Bumped whenever a rank arrives.
+    pub ranks_revision: u64,
+    /// Each player's rank (its name) in each season, by season id, as
+    /// fetched, and when; for the rank filter.
+    pub histories: HashMap<String, (HashMap<String, String>, i64)>,
+    /// Rank lookups asked for and not answered yet.
+    pub ranks_pending: usize,
 }
 
 impl Data {
@@ -106,6 +113,49 @@ impl Data {
 
     pub fn rank(&self, code: &str) -> Option<&RankRecord> {
         self.ranks.get(code)
+    }
+
+    /// `code`'s rank tier when `at` was: their finish in the season that ran
+    /// then (their rank now in the current season); `None` when unknown
+    /// (not looked up yet, no account, or before ranked existed).
+    pub fn tier_at(&self, code: &str, at: i64) -> Option<model::RankTier> {
+        let season = self
+            .seasons
+            .iter()
+            .find(|s| at >= s.start && s.end.is_none_or(|end| at < end))?;
+        if season.is_current()
+            && let Some(record) = self.ranks.get(code)
+        {
+            return record
+                .found
+                .then(|| model::RankTier::of(record.rank.as_deref().unwrap_or("")));
+        }
+        let (ranks, _) = self.histories.get(code)?;
+        if ranks.is_empty() {
+            return None; // no account
+        }
+        Some(
+            ranks
+                .get(&season.id)
+                .map_or(model::RankTier::Unranked, |rank| model::RankTier::of(rank)),
+        )
+    }
+
+    /// How `code` finished the past season that was running at `at`:
+    /// (the season's name, their rank), when their seasons were fetched.
+    pub fn past_season_rank(&self, code: &str, at: i64) -> Option<(&str, String)> {
+        let season = self
+            .seasons
+            .iter()
+            .find(|s| !s.is_current() && at >= s.start && s.end.is_some_and(|end| at < end))?;
+        let (ranks, _) = self.histories.get(code)?;
+        if ranks.is_empty() {
+            return None;
+        }
+        let rank = ranks
+            .get(&season.id)
+            .map_or("Unranked".to_owned(), |r| display_rank(r));
+        Some((&season.name, rank))
     }
 
     fn rebuild_index(&mut self) {
@@ -137,7 +187,13 @@ pub struct Derived {
 impl Derived {
     fn update(&mut self, data: &Data, filter: &Filter) {
         let key = (
-            data.revision,
+            // New ranks only matter while the filter goes by rank.
+            data.revision
+                ^ if filter.their_ranks.is_empty() {
+                    0
+                } else {
+                    data.ranks_revision << 40
+                },
             model::hash_str(&format!("{filter:?}")),
             model::hash_str(&format!("{:?}", data.my_codes)),
         );
@@ -151,7 +207,7 @@ impl Derived {
             .games
             .iter()
             .enumerate()
-            .filter(|(_, g)| filter.matches(g, &data.me, now))
+            .filter(|(_, g)| filter.matches(g, &data.me, now, |code, at| data.tier_at(code, at)))
             .map(|(i, _)| i)
             .collect();
         self.rows = model::group_rows(&data.games, &self.order);
@@ -275,6 +331,9 @@ impl EppiApp {
                 progress: Progress::default(),
                 folder_counts: Vec::new(),
                 seasons: Vec::new(),
+                ranks_revision: 0,
+                ranks_pending: 0,
+                histories: HashMap::new(),
             },
             settings,
             prefs,
@@ -295,6 +354,7 @@ impl EppiApp {
             screenshots: tour,
         };
         app.load_seasons();
+        app.load_histories();
         if app.settings.fetch_ranks {
             let codes = app.data.my_codes.clone();
             app.ranks.want(
@@ -305,6 +365,16 @@ impl EppiApp {
             );
         }
         app
+    }
+
+    /// Everyone's stored seasons, for the rank filter.
+    fn load_histories(&mut self) {
+        let Some(conn) = &self.conn else { return };
+        self.data.histories = db::load_histories(conn)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(code, (seasons, at))| (code, (tiers(&seasons), at)))
+            .collect();
     }
 
     /// The stored seasons for my code, and a fresh look once a day.
@@ -414,6 +484,36 @@ impl EppiApp {
         while let Ok(reply) = self.ranks.results.try_recv() {
             let result = match reply {
                 crate::ranks::Reply::Ranks(result) => result,
+                crate::ranks::Reply::Histories(result) => {
+                    match result {
+                        Ok(found) => {
+                            let now = self.data.now;
+                            self.ranks
+                                .histories_answered(found.iter().map(|(c, _)| c.clone()));
+                            for (code, seasons) in found {
+                                let code = model::normalize_code(&code);
+                                if let Some(conn) = &self.conn {
+                                    let _ = match &seasons {
+                                        Some(list) if !list.is_empty() => {
+                                            db::save_seasons(conn, &code, list, now)
+                                        }
+                                        _ => db::save_no_account(conn, &code, now),
+                                    };
+                                }
+                                self.data.histories.insert(
+                                    code,
+                                    (tiers(seasons.as_deref().unwrap_or_default()), now),
+                                );
+                            }
+                            self.data.ranks_revision += 1;
+                        }
+                        Err(error) => {
+                            self.ranks.histories_failed();
+                            log::warn!("seasons of opponents: {error}");
+                        }
+                    }
+                    continue;
+                }
                 crate::ranks::Reply::Seasons { code, result } => {
                     match result {
                         Ok(seasons) if !seasons.is_empty() => {
@@ -441,6 +541,7 @@ impl EppiApp {
                         }
                         self.data.ranks.insert(record.code.clone(), record);
                     }
+                    self.data.ranks_revision += 1;
                 }
                 Err(error) => {
                     self.ranks.failed();
@@ -949,6 +1050,36 @@ impl EppiApp {
             self.data.now,
             false,
         );
+        // Filtering by rank needs every opponent's rank in every season
+        // they played you: fetch the seasons of those never fetched, or
+        // fetched before the last season ended (25 a request, a request a
+        // second).
+        if !self.prefs.filter.their_ranks.is_empty() {
+            let last_ended = self
+                .data
+                .seasons
+                .iter()
+                .filter_map(|s| s.end)
+                .max()
+                .unwrap_or(0);
+            let ranks = &self.ranks;
+            let missing: HashSet<&str> = self
+                .data
+                .games
+                .iter()
+                .filter_map(|g| g.opponent(&self.data.me))
+                .map(|p| p.code.as_str())
+                .filter(|code| {
+                    self.data
+                        .histories
+                        .get(*code)
+                        .is_none_or(|(_, at)| *at < last_ended)
+                        && !ranks.history_recently_failed(code)
+                })
+                .collect();
+            self.ranks.want_histories(missing);
+        }
+        self.data.ranks_pending = self.ranks.pending_count();
     }
 }
 
@@ -1044,6 +1175,10 @@ impl eframe::App for EppiApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // The screenshot tour changes views and filters: keep the user's.
+        if self.screenshots.is_some() {
+            return;
+        }
         eframe::set_value(storage, SETTINGS_KEY, &self.settings);
         eframe::set_value(storage, PREFS_KEY, &self.prefs);
     }
@@ -1071,4 +1206,12 @@ pub fn outcome_word(outcome: Outcome) -> &'static str {
         Outcome::Loss => "Lost",
         Outcome::Unknown => "No result",
     }
+}
+
+/// Season id to rank name, from a player's seasons.
+fn tiers(seasons: &[model::Season]) -> HashMap<String, String> {
+    seasons
+        .iter()
+        .map(|s| (s.id.clone(), s.rank.clone()))
+        .collect()
 }

@@ -25,6 +25,8 @@ enum Step {
     View(View, &'static str),
     /// A view in a window tall enough to show all of it.
     Tall(View, &'static str),
+    /// Replays against Gold players, once every opponent's rank is known.
+    RankFilter(&'static str),
     Stats(&'static str),
 }
 
@@ -42,6 +44,7 @@ impl Tour {
                 Step::Tall(View::Me, "5b-me-full"),
                 Step::View(View::Highlights, "6-highlights"),
                 Step::View(View::Settings, "7-settings"),
+                Step::RankFilter("8-rank-filter"),
             ],
             frames: 0,
             started: None,
@@ -85,7 +88,12 @@ impl Tour {
         let image = self.shot.lock().ok().and_then(|mut s| s.take());
         if let Some(image) = image {
             let name = match self.steps.first() {
-                Some(Step::View(_, name) | Step::Tall(_, name) | Step::Stats(name)) => *name,
+                Some(
+                    Step::View(_, name)
+                    | Step::Tall(_, name)
+                    | Step::Stats(name)
+                    | Step::RankFilter(name),
+                ) => *name,
                 None => "done",
             };
             let path = self.folder.join(format!("{name}.png"));
@@ -148,6 +156,12 @@ impl Tour {
                         1360.0, 2300.0,
                     )));
                 }
+                Step::RankFilter(_) => {
+                    actions.push(Action::CloseStats);
+                    prefs.view = View::Replays;
+                    prefs.show_filters = true;
+                    prefs.filter.their_ranks = vec![crate::model::RankTier::Gold];
+                }
                 Step::Stats(_) => {
                     prefs.view = View::Replays;
                     if let Some(game) = data
@@ -162,7 +176,9 @@ impl Tour {
         }
         self.frames += 1;
         // Let images load and layouts settle before the capture.
-        if self.frames > 45 && !self.requested {
+        let waiting_for_ranks =
+            matches!(step, Step::RankFilter(_)) && data.ranks_pending > 0 && self.frames < 60 * 240;
+        if self.frames > 45 && !self.requested && !waiting_for_ranks {
             self.requested = true;
             let shot = self.shot.clone();
             let ctx2 = ctx.clone();

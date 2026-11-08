@@ -848,16 +848,23 @@ pub fn set_row(
         ),
     );
     if let (Some(rect), Some(opponent)) = (rank_rect, first.opponent(&data.me)) {
-        rank_tooltip(ui, rect, response.id, &opponent.code, data);
+        rank_tooltip(ui, rect, response.id, &opponent.code, first.start_at, data);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     (response, arrow.clicked())
 }
 
-fn rank_tooltip(ui: &egui::Ui, rect: Rect, id: egui::Id, code: &str, data: &Data) {
+/// Their rank now, and how they finished the season the game was in.
+fn rank_tooltip(ui: &egui::Ui, rect: Rect, id: egui::Id, code: &str, at: i64, data: &Data) {
     let hover = ui.interact(rect, id.with("rank"), Sense::hover());
     if let Some(record) = data.rank(code) {
-        let mut text = String::new();
+        let mut text = String::from("Their rank now");
+        if let Some((season, rank)) = data.past_season_rank(code, at) {
+            text.push_str(&format!(
+                "\nThis game was in {season}: they finished {rank}"
+            ));
+        }
+        text.push('\n');
         if let Some(rating) = record.rating {
             text.push_str(&format!("Rating {rating:.1}"));
         }
@@ -960,8 +967,11 @@ pub fn game_row(
             widgets::paint_outcome(ui.painter(), mark, outcome);
         }
         paint_who(ui, game, data, &columns, cy);
-        if let Some(x) = columns.rank {
-            paint_rank(ui, game, data, x, cy);
+        if let Some(x) = columns.rank
+            && let Some(rect) = paint_rank(ui, game, data, x, cy)
+            && let Some(opponent) = game.opponent(&data.me)
+        {
+            rank_tooltip(ui, rect, response.id, &opponent.code, game.start_at, data);
         }
         if let Some(x) = columns.mode {
             paint_pill(

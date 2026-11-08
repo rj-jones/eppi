@@ -582,6 +582,42 @@ pub fn save_seasons(
     tx.commit()
 }
 
+/// Every player's stored seasons and when they were fetched (a player
+/// with no account has none).
+pub fn load_histories(
+    conn: &Connection,
+) -> rusqlite::Result<HashMap<String, (Vec<crate::model::Season>, i64)>> {
+    let mut statement = conn.prepare("SELECT code, json, fetched_at FROM seasons")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    let mut out: HashMap<String, (Vec<crate::model::Season>, i64)> = HashMap::new();
+    for (code, json, at) in rows.flatten() {
+        let entry = out.entry(code).or_default();
+        entry.1 = entry.1.max(at);
+        if let Ok(season) = serde_json::from_str::<crate::model::Season>(&json)
+            && !season.id.is_empty()
+        {
+            entry.0.push(season);
+        }
+    }
+    Ok(out)
+}
+
+/// Remembers that no account has `code` (so its seasons aren't asked for
+/// again until the next season).
+pub fn save_no_account(conn: &Connection, code: &str, now: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO seasons (code, id, fetched_at, json) VALUES (?1, '', ?2, '{}')",
+        params![code, now],
+    )?;
+    Ok(())
+}
+
 /// The seasons stored for `code`, newest first, and when they were fetched.
 pub fn load_seasons(
     conn: &Connection,
@@ -595,7 +631,9 @@ pub fn load_seasons(
     let mut fetched = 0;
     for (json, at) in rows.flatten() {
         fetched = fetched.max(at);
-        if let Ok(season) = serde_json::from_str::<crate::model::Season>(&json) {
+        if let Ok(season) = serde_json::from_str::<crate::model::Season>(&json)
+            && !season.id.is_empty()
+        {
             seasons.push(season);
         }
     }

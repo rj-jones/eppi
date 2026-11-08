@@ -364,6 +364,82 @@ impl From<&Season> for SeasonFilter {
     }
 }
 
+/// A rank tier, for the filter (Gold covers Gold 1 to 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RankTier {
+    Unranked,
+    Bronze,
+    Silver,
+    Gold,
+    Platinum,
+    Diamond,
+    Master,
+    Grandmaster,
+}
+
+impl RankTier {
+    pub const ALL: [RankTier; 8] = [
+        RankTier::Bronze,
+        RankTier::Silver,
+        RankTier::Gold,
+        RankTier::Platinum,
+        RankTier::Diamond,
+        RankTier::Master,
+        RankTier::Grandmaster,
+        RankTier::Unranked,
+    ];
+
+    /// The tier of a rank's name ("Diamond 2", "Grandmaster"); anything
+    /// without one (no sets, pending, banned) is unranked.
+    pub fn of(rank: &str) -> RankTier {
+        let rank = rank.to_lowercase();
+        if rank.starts_with("grand") {
+            RankTier::Grandmaster
+        } else if rank.starts_with("master") {
+            RankTier::Master
+        } else if rank.starts_with("diamond") {
+            RankTier::Diamond
+        } else if rank.starts_with("plat") {
+            RankTier::Platinum
+        } else if rank.starts_with("gold") {
+            RankTier::Gold
+        } else if rank.starts_with("silver") {
+            RankTier::Silver
+        } else if rank.starts_with("bronze") {
+            RankTier::Bronze
+        } else {
+            RankTier::Unranked
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RankTier::Unranked => "Unranked",
+            RankTier::Bronze => "Bronze",
+            RankTier::Silver => "Silver",
+            RankTier::Gold => "Gold",
+            RankTier::Platinum => "Platinum",
+            RankTier::Diamond => "Diamond",
+            RankTier::Master => "Master",
+            RankTier::Grandmaster => "Grandmaster",
+        }
+    }
+
+    /// A rank of the tier whose icon stands for it.
+    pub fn icon_rank(self) -> &'static str {
+        match self {
+            RankTier::Unranked => "Unranked",
+            RankTier::Bronze => "Bronze 2",
+            RankTier::Silver => "Silver 2",
+            RankTier::Gold => "Gold 2",
+            RankTier::Platinum => "Platinum 2",
+            RankTier::Diamond => "Diamond 2",
+            RankTier::Master => "Master 2",
+            RankTier::Grandmaster => "Grandmaster",
+        }
+    }
+}
+
 /// What the filter bar asks for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -379,6 +455,9 @@ pub struct Filter {
     pub period: Period,
     /// Only games played during this ranked season (instead of `period`).
     pub season: Option<SeasonFilter>,
+    /// Only games against opponents of these tiers (their rank now); empty
+    /// shows all.
+    pub their_ranks: Vec<RankTier>,
     /// Only games of mine.
     pub only_mine: bool,
     /// Matches an opponent's code or name (or either player's when the game
@@ -399,6 +478,7 @@ impl Default for Filter {
             stage: None,
             period: Period::All,
             season: None,
+            their_ranks: Vec::new(),
             only_mine: false,
             search: String::new(),
         }
@@ -417,6 +497,7 @@ impl Filter {
             self.their_character.is_some(),
             self.stage.is_some(),
             self.period != Period::All || self.season.is_some(),
+            !self.their_ranks.is_empty(),
             self.only_mine,
         ]
         .into_iter()
@@ -424,7 +505,15 @@ impl Filter {
         .count()
     }
 
-    pub fn matches(&self, game: &Game, me: &Me, now: i64) -> bool {
+    /// Whether `game` passes; `rank_of(code, when)` gives an opponent's
+    /// tier at a time (`None` while it isn't known).
+    pub fn matches(
+        &self,
+        game: &Game,
+        me: &Me,
+        now: i64,
+        rank_of: impl Fn(&str, i64) -> Option<RankTier>,
+    ) -> bool {
         if self.hide_short && game.seconds() < SHORT_GAME_SECONDS {
             return false;
         }
@@ -451,6 +540,12 @@ impl Filter {
         let sides = game.sides(me);
         if self.only_mine && sides.is_none() {
             return false;
+        }
+        if !self.their_ranks.is_empty() {
+            let tier = sides.and_then(|s| rank_of(&game.players[s.opponent].code, game.start_at));
+            if !tier.is_some_and(|t| self.their_ranks.contains(&t)) {
+                return false;
+            }
         }
         if let Some(character) = self.my_character {
             match sides {
@@ -651,27 +746,30 @@ mod tests {
         let filter = Filter::default();
         let mut short = game(1, "", Mode::Unranked, 0, 0);
         short.last_frame = 60 * 10;
-        assert!(!filter.matches(&short, &me, 0));
+        assert!(!filter.matches(&short, &me, 0, |_, _| None));
         let mut cpu = game(2, "", Mode::Local, 0, 0);
         cpu.players[1].cpu = true;
-        assert!(!filter.matches(&cpu, &me, 0));
+        assert!(!filter.matches(&cpu, &me, 0, |_, _| None));
         let normal = game(3, "", Mode::Unranked, 0, 0);
-        assert!(filter.matches(&normal, &me, 0));
+        assert!(filter.matches(&normal, &me, 0, |_, _| None));
         let search = Filter {
             search: "abc".into(),
             ..Filter::default()
         };
-        assert!(search.matches(&normal, &me, 0));
+        assert!(search.matches(&normal, &me, 0, |_, _| None));
         let falco = Filter {
             their_character: Some(20),
             ..Filter::default()
         };
-        assert!(falco.matches(&normal, &me, 0));
+        assert!(falco.matches(&normal, &me, 0, |_, _| None));
         let fox = Filter {
             their_character: Some(2),
             ..Filter::default()
         };
-        assert!(!fox.matches(&normal, &me, 0), "fox is mine, not theirs");
+        assert!(
+            !fox.matches(&normal, &me, 0, |_, _| None),
+            "fox is mine, not theirs"
+        );
         let season = |start, end| Filter {
             season: Some(SeasonFilter {
                 id: "s".into(),
@@ -683,15 +781,31 @@ mod tests {
         };
         let mut late = game(4, "", Mode::Ranked, 500, 0);
         late.start_at = 500;
-        assert!(season(100, Some(600)).matches(&late, &me, 0));
+        assert!(season(100, Some(600)).matches(&late, &me, 0, |_, _| None));
         assert!(
-            !season(100, Some(500)).matches(&late, &me, 0),
+            !season(100, Some(500)).matches(&late, &me, 0, |_, _| None),
             "a season ends where the next starts"
         );
         assert!(
-            season(400, None).matches(&late, &me, 0),
+            season(400, None).matches(&late, &me, 0, |_, _| None),
             "the current season has no end"
         );
-        assert!(!season(600, None).matches(&late, &me, 0));
+        assert!(!season(600, None).matches(&late, &me, 0, |_, _| None));
+        let golds = Filter {
+            their_ranks: vec![RankTier::Gold],
+            ..Filter::default()
+        };
+        assert!(golds.matches(&normal, &me, 0, |code, _| {
+            (code == "ABC#123").then_some(RankTier::Gold)
+        }));
+        assert!(!golds.matches(&normal, &me, 0, |_, _| Some(RankTier::Diamond)));
+        assert!(
+            !golds.matches(&normal, &me, 0, |_, _| None),
+            "an unknown rank isn't Gold"
+        );
+        assert_eq!(RankTier::of("Platinum 3"), RankTier::Platinum);
+        assert_eq!(RankTier::of("Grandmaster"), RankTier::Grandmaster);
+        assert_eq!(RankTier::of("Master 1"), RankTier::Master);
+        assert_eq!(RankTier::of("Pending"), RankTier::Unranked);
     }
 }
