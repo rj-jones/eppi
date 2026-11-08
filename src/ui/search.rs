@@ -178,7 +178,7 @@ impl Search {
                     .desired_width(ui.available_width() - clear_room)
                     // Text and hint centred in the bar, level with the icon.
                     .min_size(vec2(0.0, BAR_HEIGHT))
-                    .vertical_align(egui::Align::Center)
+                    .align(egui::Align2::LEFT_CENTER)
                     .margin(Margin::ZERO);
                 let response = ui.add(edit);
                 if std::mem::take(&mut self.focus) {
