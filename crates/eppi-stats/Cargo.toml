@@ -1,0 +1,13 @@
+[package]
+name = "eppi-stats"
+version = "1.0.0"
+description = "Slippi replay statistics (a port of slippi-js's stats) on top of peppi."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+peppi.workspace = true
+serde.workspace = true
+serde_json.workspace = true

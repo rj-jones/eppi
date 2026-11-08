@@ -1,70 +1,60 @@
+[workspace]
+members = ["crates/eppi-stats", "crates/eppi-rank"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["rj-jones <rjjones@fastmail.com>"]
+
+[workspace.dependencies]
+peppi = "2.1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
 [package]
 name = "eppi"
-version = "0.2.0"
-authors = ["rj-jones <rjjones@fastmail.com>"]
-edition = "2021"
-include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
-rust-version = "1.84"
-
-[package.metadata.docs.rs]
-all-features = true
-targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+version = "1.0.0"
+description = "A fast desktop app for your Slippi replays: sets, stats, ranks and opponents."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+default-run = "eppi"
 
 [dependencies]
-anyhow = "1.0.98"
-peppi = "2.1.0"
-egui = { version = "0.31.1", default-features = false, features = [
-    "color-hex",
+eppi-stats = { path = "crates/eppi-stats" }
+eppi-rank = { path = "crates/eppi-rank" }
+peppi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+eframe = { version = "0.37", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
 ] }
-egui_extras = { version = "0.31.1", features = ["image", "svg"] }
-eframe = { version = "0.31.1", default-features = false, features = [
-    # "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
-    "default_fonts", # Embed the default egui fonts.
-    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
-    "persistence",   # Enable restoring app state when restarting the app.
-    "wayland",       # To support Linux (and CI)
-    "x11",           # To support older Linux distributions (restores one of the default features)
-] }
-log = "0.4.27"
+egui_extras = { version = "0.37", features = ["image", "svg"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+notify = "8"
+rayon = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+dirs = "6"
+env_logger = "0.11"
+open = "5"
 
-# You only need serde if you want app persistence:
-serde = { version = "1.0.219", features = ["derive"] }
-egui_file = "0.22.1"
-rayon = "1.8.0"
-walkdir = "2.4.0"
-serde_json = "1.0.140"
-reqwest = { version = "0.12.20", default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
-scraper = "0.23.1"
-tokio = { version = "1.45.1", features = ["full"] }
-num_cpus = "1.16"
-dirs = "5"
-
-# native:
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-env_logger = "0.11.8"
-
-# web:
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4.50"
-web-sys = "0.3.70"              # to access the DOM (to hide the loading text)
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
-opt-level = 2 # fast and small wasm
+opt-level = 3
+lto = "thin"
 
-# Optimize all dependencies even in debug builds:
+# Replays parse fast enough to use in debug builds too.
 [profile.dev.package."*"]
 opt-level = 2
-
-[patch.crates-io]
-egui_file = { path = "vendor/egui_file-0.22.1" }
-
-# If you want to use the bleeding edge version of egui and eframe:
-# egui = { git = "https://github.com/emilk/egui", branch = "master" }
-# eframe = { git = "https://github.com/emilk/egui", branch = "master" }
-
-# If you fork https://github.com/emilk/egui you can test with:
-# egui = { path = "../egui/crates/egui" }
-# eframe = { path = "../egui/crates/eframe" }
