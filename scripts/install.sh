@@ -27,14 +27,16 @@ uninstall=false
 case "$(uname -s)" in
 Darwin)
     app="$HOME/Applications/Eppi.app"
-    if $uninstall; then
-        rm -rf "$app"
-        echo "Removed $app"
-        exit 0
-    fi
     if pgrep -xq eppi; then
         echo "Close Eppi first, then run this again." >&2
         exit 1
+    fi
+    if $uninstall; then
+        rm -rf "$app"
+        # ~/Applications too, if installing made it and it's empty now.
+        rmdir "$HOME/Applications" 2>/dev/null || true
+        echo "Removed $app"
+        exit 0
     fi
     (cd "$repo" && cargo build --release -p eppi)
 
@@ -42,17 +44,21 @@ Darwin)
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$repo/target/release/eppi" "$app/Contents/MacOS/eppi"
 
-    # The icon, at every size macOS asks for, from the 256 px PNG.
+    # The icon, at each size an iconset names, from the 256 px PNG (sizes
+    # above it would only be blown up, so there's no 256@2x or 512).
     work="$(mktemp -d)"
     iconset="$work/eppi.iconset"
     mkdir -p "$iconset"
-    for size in 16 32 64 128 256; do
-        sips -z "$size" "$size" "$repo/assets/icon-256.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
-        half=$((size / 2))
-        if [ "$half" -ge 16 ]; then
-            cp "$iconset/icon_${size}x${size}.png" "$iconset/icon_${half}x${half}@2x.png"
-        fi
-    done
+    icon() {
+        sips -z "$1" "$1" "$repo/assets/icon-256.png" --out "$iconset/$2" >/dev/null
+    }
+    icon 16 icon_16x16.png
+    icon 32 icon_16x16@2x.png
+    icon 32 icon_32x32.png
+    icon 64 icon_32x32@2x.png
+    icon 128 icon_128x128.png
+    icon 256 icon_128x128@2x.png
+    icon 256 icon_256x256.png
     iconutil -c icns "$iconset" -o "$app/Contents/Resources/eppi.icns"
     rm -rf "$work"
 
@@ -77,7 +83,10 @@ Darwin)
 PLIST
 
     # Ad hoc: enough for macOS to run a build made on this Mac.
-    codesign --force --deep --sign - "$app" >/dev/null 2>&1 || echo "codesign failed; the app may still open"
+    # (codesign's own message, if it fails, stays on stderr.)
+    if ! codesign --force --deep --sign - "$app" >/dev/null; then
+        echo "codesign failed (above); the app may still open"
+    fi
     echo "Installed $app (Eppi $version)"
     ;;
 
@@ -85,14 +94,14 @@ Linux)
     bin="$HOME/.local/bin/eppi"
     icon="$HOME/.local/share/icons/hicolor/256x256/apps/eppi.png"
     desktop="$HOME/.local/share/applications/eppi.desktop"
+    if pgrep -x eppi >/dev/null; then
+        echo "Close Eppi first, then run this again." >&2
+        exit 1
+    fi
     if $uninstall; then
         rm -f "$bin" "$icon" "$desktop"
         echo "Removed $bin, its icon and its desktop entry"
         exit 0
-    fi
-    if pgrep -x eppi >/dev/null; then
-        echo "Close Eppi first, then run this again." >&2
-        exit 1
     fi
     (cd "$repo" && cargo build --release -p eppi)
     mkdir -p "$(dirname "$bin")" "$(dirname "$icon")" "$(dirname "$desktop")"

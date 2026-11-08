@@ -157,8 +157,10 @@ fn rank_chips(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
         );
     for tier in RankTier::ALL {
         let on = filter.their_ranks.contains(&tier);
+        // On the orange of a picked chip, white reads; the icon carries
+        // the tier's colour.
         let text = egui::RichText::new(tier.label()).color(if on {
-            widgets::rank_color(tier.icon_rank())
+            egui::Color32::WHITE
         } else {
             theme::MUTED
         });
