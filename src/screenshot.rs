@@ -8,6 +8,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub struct Tour {
+    /// Other players made anonymous (`--showcase`).
+    pub demo: bool,
+    /// The zoom the pictures are drawn at (2 for sharp showcase pictures).
+    pub scale: f32,
     folder: PathBuf,
     steps: Vec<Step>,
     /// Frames drawn since the current step started.
@@ -15,6 +19,8 @@ pub struct Tour {
     started: Option<Instant>,
     requested: bool,
     seen_busy: bool,
+    /// The window was given its size.
+    sized: bool,
     quiet_since: Option<Instant>,
     /// Where egui's screenshot callback leaves the picture.
     shot: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>>>,
@@ -29,13 +35,48 @@ enum Step {
     RankFilter(&'static str),
     /// The search bar with its suggestions open.
     Search(&'static str),
+    /// A tab of the stats page opened by the step before.
+    StatsTab(&'static str, &'static str),
     Stats(&'static str),
 }
 
 impl Tour {
+    /// The window, in the units the OS gives eframe: the view at `scale`.
+    pub fn window_size(&self) -> [f32; 2] {
+        let (w, h) = if self.demo {
+            (1280.0, 800.0)
+        } else {
+            (1360.0, 860.0)
+        };
+        [w * self.scale, h * self.scale]
+    }
+
+    /// Pictures for the README: anonymous players, drawn at twice the size.
+    pub fn showcase(folder: PathBuf) -> Self {
+        let mut tour = Self::new(folder);
+        tour.demo = true;
+        // As large as fits this PC's screen (Windows shrinks a bigger
+        // window to fit).
+        tour.scale = 1.25;
+        tour.steps = vec![
+            Step::View(View::Replays, "replays"),
+            Step::View(View::Tonight, "tonight"),
+            Step::Stats("stats"),
+            Step::StatsTab("punishes", "punishes"),
+            Step::View(View::Opponents, "opponents"),
+            Step::View(View::Me, "me"),
+            Step::View(View::Highlights, "highlights"),
+            Step::Search("search"),
+            Step::RankFilter("filters"),
+        ];
+        tour
+    }
+
     pub fn new(folder: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&folder);
         Self {
+            demo: false,
+            scale: 1.0,
             folder,
             steps: vec![
                 Step::View(View::Tonight, "1-tonight"),
@@ -53,6 +94,7 @@ impl Tour {
             started: None,
             requested: false,
             seen_busy: false,
+            sized: false,
             quiet_since: None,
             shot: Default::default(),
         }
@@ -96,7 +138,8 @@ impl Tour {
                     | Step::Tall(_, name)
                     | Step::Stats(name)
                     | Step::RankFilter(name)
-                    | Step::Search(name),
+                    | Step::Search(name)
+                    | Step::StatsTab(_, name),
                 ) => *name,
                 None => "done",
             };
@@ -125,17 +168,34 @@ impl Tour {
         let Some(step) = self.steps.first().copied() else {
             return true;
         };
+        if self.frames == 0 && !self.sized {
+            // Windows can open the window maximized or clamped; ask for the
+            // size the pictures are meant to have.
+            self.sized = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+            let [w, h] = self.window_size();
+            let zoom = ctx.zoom_factor();
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                w / zoom,
+                h / zoom,
+            )));
+        }
         if self.frames == 0 {
             match step {
                 Step::View(view, _) => {
                     actions.push(Action::CloseStats);
                     actions.push(Action::DemoLive(None));
                     prefs.view = view;
+                    if self.demo {
+                        // From the defaults, not the owner's saved filters.
+                        prefs.filter = crate::model::Filter::default();
+                        prefs.show_filters = false;
+                    }
                     // Show the details pane with something in it.
                     let latest = data.games.iter().find(|g| g.sides(&data.me).is_some());
                     match view {
                         View::Replays => {
-                            if let Some(game) = latest {
+                            if let Some(game) = featured_game(data) {
                                 actions.push(Action::GoToGame(game.id));
                             }
                         }
@@ -147,8 +207,8 @@ impl Tour {
                             }
                         }
                         View::Opponents => {
-                            if let Some(opponent) = latest.and_then(|g| g.opponent(&data.me)) {
-                                actions.push(Action::GoToOpponent(opponent.code.clone()));
+                            if let Some(code) = rival(data) {
+                                actions.push(Action::GoToOpponent(code));
                             }
                         }
                         _ => {}
@@ -164,21 +224,27 @@ impl Tour {
                     prefs.filter.their_ranks.clear();
                     prefs.show_filters = false;
                     prefs.view = View::Replays;
-                    actions.push(Action::DemoSearch("pin".into()));
+                    actions.push(Action::DemoSearch(
+                        if self.demo { "co" } else { "pin" }.into(),
+                    ));
                 }
                 Step::RankFilter(_) => {
                     actions.push(Action::CloseStats);
+                    actions.push(Action::DemoLive(None));
+                    // Clears the search the step before typed, too.
+                    prefs.filter = crate::model::Filter::default();
                     prefs.view = View::Replays;
                     prefs.show_filters = true;
                     prefs.filter.their_ranks = vec![crate::model::RankTier::Gold];
                 }
+                Step::StatsTab(tab, _) => {
+                    actions.push(Action::DemoLive(None));
+                    actions.push(Action::DemoStatsTab(tab));
+                }
                 Step::Stats(_) => {
                     prefs.view = View::Replays;
-                    if let Some(game) = data
-                        .games
-                        .iter()
-                        .find(|g| g.stats_version > 0 && g.sides(&data.me).is_some())
-                    {
+                    actions.push(Action::DemoLive(None));
+                    if let Some(game) = featured_game(data) {
                         actions.push(Action::OpenStats(game.id));
                     }
                 }
@@ -201,4 +267,38 @@ impl Tour {
         }
         false
     }
+}
+
+/// The newest game I won that has stats: what the pictures show open.
+fn featured_game(data: &Data) -> Option<&crate::model::Game> {
+    data.games
+        .iter()
+        .find(|g| g.stats_version > 0 && g.outcome(&data.me) == crate::model::Outcome::Win)
+}
+
+/// The ranked opponent I've played most among my last 400 games.
+fn rival(data: &Data) -> Option<String> {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let ranked = |code: &str| {
+        data.rank(code)
+            .and_then(|r| r.rank.as_deref())
+            .is_some_and(|r| crate::model::RankTier::of(r) != crate::model::RankTier::Unranked)
+    };
+    for game in data
+        .games
+        .iter()
+        .filter(|g| g.sides(&data.me).is_some())
+        .take(400)
+    {
+        if let Some(opponent) = game
+            .opponent(&data.me)
+            .filter(|p| !p.code.is_empty() && ranked(&p.code))
+        {
+            *counts.entry(&opponent.code).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(code, _)| code.to_owned())
 }

@@ -534,29 +534,55 @@ struct Columns {
 }
 
 impl Columns {
+    /// Lays the columns out from the right: the time and the result always,
+    /// then the rank, the mode and the stages while the name keeps room for
+    /// itself (they drop out in the reverse order as the list narrows).
     fn new(rect: Rect, indent: f32) -> Self {
-        let width = rect.width();
+        const NAME_MIN: f32 = 170.0;
+        const TIME: f32 = 100.0;
+        const RESULT: f32 = 84.0;
+        const RANK: f32 = 136.0;
+        const MODE: f32 = 86.0;
+        const STAGE: f32 = 170.0;
+        const GAP: f32 = 12.0;
         let left = rect.min.x + 12.0 + indent;
-        let time_right = rect.max.x - 14.0;
-        let wide = width > 820.0;
-        let medium = width > 640.0;
         let name = left + 116.0;
-        let result = rect.max.x
-            - if wide {
-                360.0
-            } else if medium {
-                250.0
-            } else {
-                150.0
-            };
-        let stage = wide.then_some(result + 90.0);
-        let mode = medium.then_some(result - 92.0);
-        let rank = (width > 560.0).then_some(mode.unwrap_or(result) - 150.0);
-        let name_end = rank.or(mode).unwrap_or(result) - 12.0;
+        let time_right = rect.max.x - 14.0;
+        let mut room = time_right - TIME - GAP - RESULT - GAP - name - NAME_MIN;
+        let mut take = |width: f32| {
+            let fits = room >= width + GAP;
+            if fits {
+                room -= width + GAP;
+            }
+            fits
+        };
+        let (has_rank, has_mode, has_stage) = (take(RANK), take(MODE), take(STAGE));
+        let mut x = time_right - TIME - GAP;
+        let stage = has_stage.then(|| {
+            x -= STAGE;
+            let at = x;
+            x -= GAP;
+            at
+        });
+        x -= RESULT;
+        let result = x;
+        x -= GAP;
+        let mode = has_mode.then(|| {
+            x -= MODE;
+            let at = x;
+            x -= GAP;
+            at
+        });
+        let rank = has_rank.then(|| {
+            x -= RANK;
+            let at = x;
+            x -= GAP;
+            at
+        });
         Self {
             left,
             name,
-            name_width: (name_end - name).max(60.0),
+            name_width: (x - name).max(60.0),
             rank,
             mode,
             result,
@@ -811,7 +837,7 @@ pub fn set_row(
         painter.text(
             pos2(columns.result, cy),
             egui::Align2::LEFT_CENTER,
-            format!("{} games", set.games.len()),
+            widgets::count(set.games.len(), "game"),
             FontId::proportional(theme::text::SMALL),
             theme::MUTED,
         );
@@ -842,8 +868,8 @@ pub fn set_row(
         cy,
         crate::time::short(first.start_at, data.now),
         format!(
-            "{} games · {}",
-            set.games.len(),
+            "{} · {}",
+            widgets::count(set.games.len(), "game"),
             crate::time::duration(seconds)
         ),
     );

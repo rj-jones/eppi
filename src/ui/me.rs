@@ -381,7 +381,11 @@ impl State {
                 ui.spacing_mut().item_spacing.x = 34.0;
                 widgets::stat_tile(
                     ui,
-                    format!("{}–{}", s.games.wins, s.games.losses),
+                    format!(
+                        "{}–{}",
+                        widgets::thousands(s.games.wins as usize),
+                        widgets::thousands(s.games.losses as usize)
+                    ),
                     "Games",
                     widgets::win_rate_color(s.games.wins, s.games.total()),
                 );
@@ -393,7 +397,11 @@ impl State {
                 );
                 widgets::stat_tile(
                     ui,
-                    format!("{}–{}", s.sets.wins, s.sets.losses),
+                    format!(
+                        "{}–{}",
+                        widgets::thousands(s.sets.wins as usize),
+                        widgets::thousands(s.sets.losses as usize)
+                    ),
                     "Sets",
                     widgets::win_rate_color(s.sets.wins, s.sets.total()),
                 );
@@ -620,7 +628,7 @@ impl State {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         win_bar(ui, record);
                         ui.label(
-                            theme::muted(format!("{} games", record.total()))
+                            theme::muted(widgets::count(record.total() as usize, "game"))
                                 .size(theme::text::SMALL),
                         );
                     });
@@ -735,7 +743,11 @@ impl State {
                     ui.selectable_value(
                         &mut self.matchup,
                         Some(*key),
-                        format!("{}  ({} games)", label(*key), record.total()),
+                        format!(
+                            "{}  ({})",
+                            label(*key),
+                            widgets::count(record.total() as usize, "game")
+                        ),
                     );
                 }
             });

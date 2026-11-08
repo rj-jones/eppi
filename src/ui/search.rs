@@ -35,6 +35,8 @@ impl Person {
 
 const MAX_SUGGESTIONS: usize = 8;
 const ROW_HEIGHT: f32 = 44.0;
+/// What the header shows after the bar (Filters, my rank, progress).
+const RIGHT_OF_BAR: f32 = 430.0;
 /// The bar's height inside its frame.
 const BAR_HEIGHT: f32 = 32.0;
 
@@ -147,7 +149,10 @@ impl Search {
         self.rebuild(data);
         let id = egui::Id::unique("search");
         let focused = ui.memory(|m| m.has_focus(id));
-        let width = ui.available_width().min(380.0);
+        // Leave room on the right for Filters and the header's rank and
+        // progress, so a narrow window shrinks the bar instead of covering
+        // them.
+        let width = (ui.available_width() - RIGHT_OF_BAR).clamp(160.0, 380.0);
         let frame = egui::Frame::new()
             .fill(theme::BUTTON)
             .corner_radius(CornerRadius::same(7))

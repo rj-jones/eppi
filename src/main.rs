@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod demo;
 mod dolphin;
 mod folders;
 mod library;
@@ -45,6 +46,10 @@ fn main() -> eframe::Result {
                 let folder = args.next().unwrap_or_else(|| "screenshots".into());
                 tour = Some(screenshot::Tour::new(folder.into()));
             }
+            "--showcase" => {
+                let folder = args.next().unwrap_or_else(|| "docs/screenshots".into());
+                tour = Some(screenshot::Tour::showcase(folder.into()));
+            }
             "--version" => {
                 println!("eppi {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
@@ -57,7 +62,7 @@ fn main() -> eframe::Result {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title("Eppi")
         .with_app_id("eppi")
-        .with_inner_size([1360.0, 860.0])
+        .with_inner_size(tour.as_ref().map_or([1360.0, 860.0], |t| t.window_size()))
         .with_min_inner_size([960.0, 600.0]);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);

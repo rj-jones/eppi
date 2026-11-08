@@ -41,6 +41,17 @@ fn play_from(game: &Game, frame: i32, lead: i32) -> Action {
 }
 
 impl Page {
+    /// Switches to the tab named `name` ("kills", "punishes", "actions",
+    /// else the overview).
+    pub fn show_tab(&mut self, name: &str) {
+        self.tab = match name {
+            "kills" => Tab::Kills,
+            "punishes" => Tab::Punishes,
+            "actions" => Tab::Actions,
+            _ => Tab::Overview,
+        };
+    }
+
     pub fn new(game: Game, json: Option<String>) -> Self {
         let stats = json.and_then(|j| serde_json::from_str(&j).ok());
         Self {
@@ -203,6 +214,8 @@ fn table(ui: &mut egui::Ui, id: &str, players: &[Player], rows: Vec<TableRow<'_>
         ui.set_width(ui.available_width());
         egui::Grid::new(id)
             .num_columns(players.len() + 1)
+            // The same widths in every table, so the columns line up.
+            .min_col_width(170.0)
             .spacing([40.0, 8.0])
             .striped(true)
             .show(ui, |ui| {

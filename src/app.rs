@@ -243,6 +243,8 @@ pub enum Action {
     DemoLive(Option<Box<Game>>),
     /// The screenshot tour: type `String` into the search bar.
     DemoSearch(String),
+    /// The screenshot tour: show this tab of the open stats page.
+    DemoStatsTab(&'static str),
 }
 
 struct Toast {
@@ -272,6 +274,8 @@ pub struct EppiApp {
     search: crate::ui::search::Search,
     /// Screenshot mode: (folder, views still to capture, frames to wait).
     screenshots: Option<crate::screenshot::Tour>,
+    /// Demo mode (`--showcase`): other players made anonymous.
+    demo: bool,
 }
 
 /// The navigation column's width.
@@ -283,6 +287,10 @@ const PREFS_KEY: &str = "prefs";
 impl EppiApp {
     pub fn new(cc: &eframe::CreationContext<'_>, tour: Option<crate::screenshot::Tour>) -> Self {
         theme::install(&cc.egui_ctx);
+        let demo = tour.as_ref().is_some_and(|t| t.demo);
+        if let Some(tour) = &tour {
+            cc.egui_ctx.set_zoom_factor(tour.scale);
+        }
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
         let mut settings: Settings = cc
@@ -357,9 +365,20 @@ impl EppiApp {
             toasts: Vec::new(),
             search: Default::default(),
             screenshots: tour,
+            demo,
         };
         app.load_seasons();
         app.load_histories();
+        if app.demo {
+            // Nobody else's name, code or notes in the pictures, and no
+            // lookups under made-up codes.
+            app.settings.fetch_ranks = false;
+            app.settings.notify_live = false;
+            app.data.notes.clear();
+            let me = app.data.me.clone();
+            app.data.ranks = crate::demo::ranks(std::mem::take(&mut app.data.ranks), &me);
+            app.data.histories = crate::demo::keys(std::mem::take(&mut app.data.histories), &me);
+        }
         if app.settings.fetch_ranks {
             let codes = app.data.my_codes.clone();
             app.ranks.want(
@@ -411,12 +430,20 @@ impl EppiApp {
         let mut changed = false;
         while let Ok(event) = self.library.events.try_recv() {
             match event {
-                library::Event::Loaded(games) => {
+                library::Event::Loaded(mut games) => {
+                    if self.demo {
+                        games
+                            .iter_mut()
+                            .for_each(|g| crate::demo::game(g, &self.data.me));
+                    }
                     self.data.games = games;
                     changed = true;
                 }
                 library::Event::Upserted(games) => {
-                    for game in games {
+                    for mut game in games {
+                        if self.demo {
+                            crate::demo::game(&mut game, &self.data.me);
+                        }
                         match self.data.index.get(&game.id) {
                             Some(&i) => self.data.games[i] = game,
                             None => {
@@ -449,7 +476,10 @@ impl EppiApp {
                     self.data.revision += 1;
                 }
                 library::Event::Progress(progress) => self.data.progress = progress,
-                library::Event::LiveStarted(game) => {
+                library::Event::LiveStarted(mut game) => {
+                    if self.demo {
+                        crate::demo::game(&mut game, &self.data.me);
+                    }
                     let opponent = game.opponent(&self.data.me).cloned();
                     if let Some(opponent) = &opponent
                         && self.settings.fetch_ranks
@@ -630,6 +660,11 @@ impl EppiApp {
                 }
                 Action::DemoLive(game) => {
                     self.data.live = game.map(|g| vec![*g]).unwrap_or_default()
+                }
+                Action::DemoStatsTab(tab) => {
+                    if let Some(page) = &mut self.stats {
+                        page.show_tab(tab);
+                    }
                 }
                 Action::DemoSearch(text) => {
                     self.prefs.filter.search = text;

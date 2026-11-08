@@ -350,7 +350,7 @@ fn set_details(
         (Some(_), std::cmp::Ordering::Greater) => format!("Won {mine}–{theirs}"),
         (Some(_), std::cmp::Ordering::Less) => format!("Lost {mine}–{theirs}"),
         (Some(_), _) => format!("{mine}–{theirs}"),
-        (None, _) => format!("{} games", games.len()),
+        (None, _) => widgets::count(games.len(), "game"),
     };
     let label = match kind {
         SetKind::Ranked => "Ranked set",
@@ -358,8 +358,8 @@ fn set_details(
     };
     let seconds: f64 = games.iter().map(|g| g.seconds()).sum();
     let subtitle = format!(
-        "{label} · {} games · {} · {}",
-        games.len(),
+        "{label} · {} · {} · {}",
+        widgets::count(games.len(), "game"),
         crate::time::duration(seconds),
         crate::time::short(first.start_at, data.now)
     );

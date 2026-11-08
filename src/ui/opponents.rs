@@ -439,9 +439,10 @@ fn row(ui: &mut egui::Ui, summary: &Summary, data: &Data, selected: bool) -> egu
         pos2(record_x, cy + 10.0),
         egui::Align2::LEFT_CENTER,
         format!(
-            "{} · {} games",
+            "{} · {} game{}",
             widgets::percent(summary.wins, decided),
-            summary.games
+            summary.games,
+            if summary.games == 1 { "" } else { "s" }
         ),
         FontId::proportional(theme::text::SMALL),
         theme::MUTED,

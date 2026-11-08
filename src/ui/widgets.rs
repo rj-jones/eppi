@@ -249,6 +249,15 @@ pub fn thousands(n: usize) -> String {
     out
 }
 
+/// "1 game", "1,234 games".
+pub fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{} {noun}s", thousands(n))
+    }
+}
+
 /// "62%" or "–".
 pub fn percent(part: u32, whole: u32) -> String {
     if whole == 0 {
