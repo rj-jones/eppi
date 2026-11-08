@@ -1,0 +1,13 @@
+{
+  "name": "verify-stats",
+  "private": true,
+  "type": "module",
+  "description": "Compares eppi-stats output against the real slippi-js getStats()/getWinners().",
+  "scripts": {
+    "slippi": "node slippi-dump.mjs",
+    "compare": "node compare.mjs"
+  },
+  "dependencies": {
+    "@slippi/slippi-js": "9.1.3"
+  }
+}

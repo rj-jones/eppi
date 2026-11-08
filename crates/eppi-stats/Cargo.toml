@@ -11,3 +11,6 @@ authors.workspace = true
 peppi.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+rayon = "1"
