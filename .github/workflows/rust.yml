@@ -7,127 +7,65 @@ permissions:
 
 env:
   RUSTFLAGS: -D warnings
-  RUSTDOCFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
 
 jobs:
   check:
-    name: Check
-    runs-on: ubuntu-latest
+    name: Lint and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --all-features
-
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --lib
-
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: clippy
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+          components: rustfmt, clippy
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libdbus-1-dev
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
 
   build:
+    name: Build ${{ matrix.target }}
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-        - os: macos-latest
-          TARGET: aarch64-apple-darwin
-
-        - os: ubuntu-latest
-          TARGET: aarch64-unknown-linux-musl
-
-        - os: ubuntu-latest
-          TARGET: armv7-unknown-linux-musleabihf
-
-        - os: ubuntu-latest
-          TARGET: x86_64-unknown-linux-musl
-
-        - os: windows-latest
-          TARGET: x86_64-pc-windows-msvc
-          EXTENSION: .exe
-
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            extension: .exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
     steps:
-    - name: Building ${{ matrix.TARGET }}
-      run: echo "${{ matrix.TARGET }}"
-
-    - uses: actions/checkout@master
-    - name: Install build dependencies - Rustup
-      run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile default --target ${{ matrix.TARGET }} -y
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-    - name: Install cross
-      run: |
-        cargo install cross
-
-    - name: Build
-      run: |
-        cross build --verbose --release --target=${{ matrix.TARGET }}
-
-    - name: Rename
-      run: cp target/${{ matrix.TARGET }}/release/eppi${{ matrix.EXTENSION }} eppi-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-
-    - uses: actions/upload-artifact@master
-      with:
-        name: eppi-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-        path: eppi-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-
-    - uses: svenstaro/upload-release-action@v2
-      name: Upload binaries to release
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: eppi-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-        asset_name: eppi-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-        tag: ${{ github.ref }}
-        prerelease: false
-        overwrite: true
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libdbus-1-dev
+      - run: cargo build --release -p eppi --target ${{ matrix.target }}
+      - name: Rename
+        shell: bash
+        run: cp target/${{ matrix.target }}/release/eppi${{ matrix.extension }} eppi-${{ matrix.target }}${{ matrix.extension }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eppi-${{ matrix.target }}${{ matrix.extension }}
+          path: eppi-${{ matrix.target }}${{ matrix.extension }}
+      - uses: svenstaro/upload-release-action@v2
+        name: Upload binaries to release
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: eppi-${{ matrix.target }}${{ matrix.extension }}
+          asset_name: eppi-${{ matrix.target }}${{ matrix.extension }}
+          tag: ${{ github.ref }}
+          overwrite: true
