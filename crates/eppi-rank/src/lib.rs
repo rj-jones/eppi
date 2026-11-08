@@ -16,9 +16,11 @@
 
 mod client;
 mod rank;
+mod seasons;
 
 pub use client::{BATCH_SIZE, ENDPOINT, Error, TIMEOUT, USER_AGENT, fetch, normalize_code};
 pub use rank::{GRANDMASTER_MIN_RATING, Rank, SETS_REQUIRED_FOR_RANK, UNRANKED_COLOR};
+pub use seasons::{Season, fetch_seasons};
 
 /// The result for one connect code.
 #[derive(Debug, Clone, PartialEq)]

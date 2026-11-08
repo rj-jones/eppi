@@ -130,7 +130,7 @@ pub fn normalize_code(code: &str) -> String {
     code.trim().replace('＃', "#").to_uppercase()
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .user_agent(USER_AGENT)
@@ -139,7 +139,7 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-fn post(agent: &ureq::Agent, request: &serde_json::Value) -> Result<String, Error> {
+pub(crate) fn post(agent: &ureq::Agent, request: &serde_json::Value) -> Result<String, Error> {
     let mut response = agent
         .post(ENDPOINT)
         .send_json(request)
@@ -255,7 +255,7 @@ struct SeasonJson {
 }
 
 /// The GraphQL error messages in a body, if it has any.
-fn graphql_errors(body: &str) -> Option<Vec<String>> {
+pub(crate) fn graphql_errors(body: &str) -> Option<Vec<String>> {
     let envelope: Envelope = serde_json::from_str(body).ok()?;
     if envelope.errors.is_empty() {
         None

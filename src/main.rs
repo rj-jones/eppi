@@ -4,6 +4,7 @@
 
 mod app;
 mod dolphin;
+mod folders;
 mod library;
 mod melee;
 mod model;

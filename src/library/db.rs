@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 6;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     if let Some(dir) = path.parent() {
@@ -131,6 +131,26 @@ fn migrate_steps(conn: &Connection) -> rusqlite::Result<()> {
         // Files peppi rejected are read from a repaired copy since 4.
         conn.execute_batch("UPDATE games SET mtime = -1 WHERE error IS NOT NULL;")?;
     }
+    if version < 5 {
+        // A game's identity apart from its path, so copies of a replay in
+        // several folders count once: read every file again to fill it in.
+        conn.execute_batch(
+            "ALTER TABLE games ADD COLUMN fingerprint INTEGER;
+             CREATE INDEX IF NOT EXISTS games_fingerprint ON games(fingerprint);
+             UPDATE games SET mtime = -1;",
+        )?;
+    }
+    if version < 6 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS seasons (
+                code TEXT NOT NULL,
+                id TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL,
+                json TEXT NOT NULL,
+                PRIMARY KEY (code, id)
+            );",
+        )?;
+    }
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -175,7 +195,13 @@ pub fn file_state(conn: &Connection, path: &Path) -> rusqlite::Result<Option<Fil
     .optional()
 }
 
-const GAME_COLUMNS: &str = "id, path, start_at, last_frame, stage, mode, match_id, game_number, tiebreaker, is_teams, players, winners, lras, stocks_left, stats_version, numbers";
+const GAME_COLUMNS: &str = "id, path, start_at, last_frame, stage, mode, match_id, game_number, tiebreaker, is_teams, players, winners, lras, stocks_left, stats_version, numbers, fingerprint";
+
+/// Rows that are the copy of their game the app shows: copies of one
+/// replay in several places share a fingerprint, and the first indexed
+/// stands for them all.
+const PRIMARY: &str =
+    "id IN (SELECT MIN(id) FROM games WHERE error IS NULL GROUP BY COALESCE(fingerprint, -id))";
 
 fn game_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Game> {
     let players: String = row.get(10)?;
@@ -198,19 +224,19 @@ fn game_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Game> {
         stocks_left: serde_json::from_str(&stocks_left).unwrap_or_default(),
         stats_version: row.get::<_, i64>(14)? as u32,
         numbers: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
+        fingerprint: row.get::<_, Option<i64>>(16)?.unwrap_or_default(),
     })
 }
 
-/// Every readable game, newest first.
+/// Every readable game (one copy of each), newest first.
 pub fn load_games(conn: &Connection) -> rusqlite::Result<Vec<Game>> {
     let mut statement = conn.prepare(&format!(
-        "SELECT {GAME_COLUMNS} FROM games WHERE error IS NULL ORDER BY start_at DESC, id DESC"
+        "SELECT {GAME_COLUMNS} FROM games WHERE error IS NULL AND {PRIMARY} ORDER BY start_at DESC, id DESC"
     ))?;
     let rows = statement.query_map([], game_from_row)?;
     rows.collect()
 }
 
-#[cfg(test)]
 pub fn load_game(conn: &Connection, id: i64) -> rusqlite::Result<Option<Game>> {
     conn.query_row(
         &format!("SELECT {GAME_COLUMNS} FROM games WHERE id = ?1"),
@@ -220,19 +246,25 @@ pub fn load_game(conn: &Connection, id: i64) -> rusqlite::Result<Option<Game>> {
     .optional()
 }
 
-/// Inserts or replaces a game read from `path`; returns its id.
+/// Inserts or replaces a game read from `path`; returns its id. The same
+/// game read again (its fingerprint unchanged) keeps its stats.
 pub fn upsert_game(conn: &Connection, game: &Game, size: u64, mtime: i64) -> rusqlite::Result<i64> {
     let path = game.path.to_string_lossy();
     conn.execute(
         "INSERT INTO games (path, size, mtime, error, start_at, last_frame, stage, mode, match_id,
-             game_number, tiebreaker, is_teams, players, winners, lras, stocks_left, stats_version)
-         VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, '[]', 0)
+             game_number, tiebreaker, is_teams, players, winners, lras, stocks_left, stats_version,
+             fingerprint)
+         VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, '[]', 0, ?15)
          ON CONFLICT(path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, error = NULL,
              start_at = excluded.start_at, last_frame = excluded.last_frame, stage = excluded.stage,
              mode = excluded.mode, match_id = excluded.match_id, game_number = excluded.game_number,
              tiebreaker = excluded.tiebreaker, is_teams = excluded.is_teams, players = excluded.players,
-             winners = excluded.winners, lras = excluded.lras, stocks_left = '[]', stats_version = 0,
-             numbers = '[]'",
+             lras = excluded.lras,
+             winners = CASE WHEN fingerprint IS excluded.fingerprint THEN winners ELSE excluded.winners END,
+             stocks_left = CASE WHEN fingerprint IS excluded.fingerprint THEN stocks_left ELSE '[]' END,
+             stats_version = CASE WHEN fingerprint IS excluded.fingerprint THEN stats_version ELSE 0 END,
+             numbers = CASE WHEN fingerprint IS excluded.fingerprint THEN numbers ELSE '[]' END,
+             fingerprint = excluded.fingerprint",
         params![
             path,
             size as i64,
@@ -248,6 +280,7 @@ pub fn upsert_game(conn: &Connection, game: &Game, size: u64, mtime: i64) -> rus
             serde_json::to_string(&game.players).unwrap_or_else(|_| "[]".into()),
             serde_json::to_string(&game.winners).unwrap_or_else(|_| "[]".into()),
             game.lras.map(|p| p as i64),
+            game.fingerprint,
         ],
     )?;
     conn.query_row("SELECT id FROM games WHERE path = ?1", [path], |row| {
@@ -272,6 +305,46 @@ pub fn mark_unreadable(
     Ok(())
 }
 
+/// The copy of the game `fingerprint` the app shows.
+pub fn primary_id(conn: &Connection, fingerprint: i64) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT MIN(id) FROM games WHERE error IS NULL AND fingerprint = ?1",
+        [fingerprint],
+        |row| row.get(0),
+    )
+}
+
+/// Indexed files that couldn't be read.
+pub fn unreadable_count(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM games WHERE error IS NOT NULL",
+        [],
+        |row| row.get::<_, i64>(0).map(|n| n as usize),
+    )
+}
+
+/// Indexed files that are a copy of a game indexed from another file.
+pub fn duplicate_count(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM games WHERE error IS NULL AND NOT {PRIMARY}"),
+        [],
+        |row| row.get::<_, i64>(0).map(|n| n as usize),
+    )
+}
+
+/// The fingerprints of games `ids` (those that have one).
+pub fn fingerprints(conn: &Connection, ids: &[i64]) -> rusqlite::Result<Vec<i64>> {
+    let mut statement =
+        conn.prepare("SELECT fingerprint FROM games WHERE id = ?1 AND fingerprint IS NOT NULL")?;
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(f) = statement.query_row([id], |row| row.get(0)).optional()? {
+            out.push(f);
+        }
+    }
+    Ok(out)
+}
+
 pub fn remove_games(conn: &Connection, ids: &[i64]) -> rusqlite::Result<()> {
     let mut statement = conn.prepare("DELETE FROM games WHERE id = ?1")?;
     for id in ids {
@@ -285,9 +358,10 @@ pub fn games_needing_stats(
     conn: &Connection,
     version: u32,
 ) -> rusqlite::Result<Vec<(i64, PathBuf)>> {
-    let mut statement = conn.prepare(
-        "SELECT id, path FROM games WHERE error IS NULL AND stats_version != ?1 ORDER BY start_at DESC",
-    )?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT id, path FROM games WHERE error IS NULL AND stats_version != ?1 AND {PRIMARY}
+             ORDER BY start_at DESC"
+    ))?;
     let rows = statement.query_map([version as i64], |row| {
         Ok((row.get(0)?, PathBuf::from(row.get::<_, String>(1)?)))
     })?;
@@ -486,6 +560,47 @@ pub fn rank_history(conn: &Connection, code: &str) -> rusqlite::Result<Vec<RankR
     ))?;
     let rows = statement.query_map([code], rank_from_row)?;
     rows.collect()
+}
+
+/// Stores the seasons `code` played in (as fetched at `now`).
+pub fn save_seasons(
+    conn: &Connection,
+    code: &str,
+    seasons: &[crate::model::Season],
+    now: i64,
+) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut statement = tx.prepare(
+            "INSERT OR REPLACE INTO seasons (code, id, fetched_at, json) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for season in seasons {
+            let json = serde_json::to_string(season).unwrap_or_default();
+            statement.execute(params![code, season.id, now, json])?;
+        }
+    }
+    tx.commit()
+}
+
+/// The seasons stored for `code`, newest first, and when they were fetched.
+pub fn load_seasons(
+    conn: &Connection,
+    code: &str,
+) -> rusqlite::Result<(Vec<crate::model::Season>, i64)> {
+    let mut statement = conn.prepare("SELECT json, fetched_at FROM seasons WHERE code = ?1")?;
+    let rows = statement.query_map([code], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut seasons = Vec::new();
+    let mut fetched = 0;
+    for (json, at) in rows.flatten() {
+        fetched = fetched.max(at);
+        if let Ok(season) = serde_json::from_str::<crate::model::Season>(&json) {
+            seasons.push(season);
+        }
+    }
+    seasons.sort_by_key(|s| std::cmp::Reverse(s.start));
+    Ok((seasons, fetched))
 }
 
 pub fn load_notes(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {

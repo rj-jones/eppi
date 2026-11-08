@@ -306,14 +306,36 @@ impl State {
                                 Period::Year,
                                 Period::All,
                             ] {
-                                let on = filter.period == period;
+                                let on = filter.season.is_none() && filter.period == period;
                                 if ui
                                     .add(egui::Button::new(period.label()).selected(on))
                                     .clicked()
                                 {
                                     filter.period = period;
+                                    filter.season = None;
                                 }
                             }
+                            if let Some(current) = data.seasons.iter().find(|s| s.is_current()) {
+                                let on = filter.season.as_ref().is_some_and(|s| s.id == current.id);
+                                if ui
+                                    .add(egui::Button::new("This season").selected(on))
+                                    .on_hover_text(format!(
+                                        "{}, since {}",
+                                        current.name,
+                                        crate::time::day_label(current.start)
+                                    ))
+                                    .clicked()
+                                {
+                                    filter.season = Some(current.into());
+                                    filter.period = Period::All;
+                                }
+                            }
+                            crate::ui::filter_bar::when_picker(
+                                ui,
+                                "me-when",
+                                filter,
+                                &data.seasons,
+                            );
                         });
                         ui.add_space(theme::space::M);
                         self.tiles(ui);
@@ -491,6 +513,13 @@ impl State {
                         }
                     });
                 });
+            }
+            if !data.seasons.is_empty() {
+                ui.add_space(8.0);
+                ui.label(theme::caption("Seasons"));
+                for season in &data.seasons {
+                    seasons_row(ui, season);
+                }
             }
             if self.history.len() > 1 {
                 ui.add_space(6.0);
@@ -928,4 +957,46 @@ impl Report {
             kill_percent: kill_sum / kills.max(1) as f64,
         }
     }
+}
+
+/// A season in the rank card: its name and dates, and how I finished it.
+fn seasons_row(ui: &mut egui::Ui, season: &crate::model::Season) {
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let name = if season.is_current() {
+                format!("{} (now)", season.name)
+            } else {
+                season.name.clone()
+            };
+            ui.label(RichText::new(name).strong());
+            let dates = match season.end {
+                Some(end) => format!(
+                    "{} – {}",
+                    crate::time::month_label(season.start),
+                    crate::time::month_label(end)
+                ),
+                None => format!("since {}", crate::time::day_label(season.start)),
+            };
+            ui.label(theme::muted(dates).size(theme::text::SMALL));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let (Some(w), Some(l)) = (season.wins, season.losses) {
+                ui.label(
+                    RichText::new(format!("{w}–{l}"))
+                        .color(widgets::win_rate_color(w, w + l))
+                        .size(theme::text::SMALL),
+                )
+                .on_hover_text("Sets won and lost");
+            }
+            if season.sets > 0 {
+                ui.label(theme::muted(format!("{:.0}", season.rating)).size(theme::text::SMALL));
+            }
+            let rank = display_rank(&season.rank);
+            ui.label(RichText::new(&rank).color(widgets::rank_color(&rank)));
+            if let Some(source) = widgets::rank_source(&rank) {
+                ui.add(egui::Image::new(source).fit_to_exact_size(vec2(22.0, 22.0)));
+            }
+        });
+    });
 }

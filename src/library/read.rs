@@ -174,6 +174,7 @@ fn summarize(
         stocks_left: Vec::new(),
         stats_version: 0,
         numbers: Vec::new(),
+        fingerprint: fingerprint(start, last_frame),
     }
 }
 
@@ -219,4 +220,25 @@ fn winners(
     } else {
         vec![first_port]
     }
+}
+
+/// What tells one game from another apart from its file: the random seed
+/// the game started with, where, how long, and who played (copies of a
+/// replay agree on all of it; two games essentially never do).
+fn fingerprint(start: &peppi::game::Start, last_frame: i32) -> i64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash, Hasher};
+    let mut h = BuildHasherDefault::<DefaultHasher>::default().build_hasher();
+    start.random_seed.hash(&mut h);
+    start.stage.hash(&mut h);
+    last_frame.hash(&mut h);
+    if let Some(m) = &start.r#match {
+        (&m.id, m.game, m.tiebreaker).hash(&mut h);
+    }
+    for p in &start.players {
+        (u8::from(p.port), p.character, p.costume).hash(&mut h);
+        if let Some(n) = &p.netplay {
+            n.code.0.hash(&mut h);
+        }
+    }
+    h.finish() as i64
 }

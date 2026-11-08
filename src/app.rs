@@ -93,6 +93,10 @@ pub struct Data {
     pub live: Vec<Game>,
     pub now: i64,
     pub progress: Progress,
+    /// Each folder read and how many replay files it holds.
+    pub folder_counts: Vec<(PathBuf, usize)>,
+    /// The ranked seasons, newest first, with how I finished each.
+    pub seasons: Vec<model::Season>,
 }
 
 impl Data {
@@ -225,6 +229,7 @@ impl EppiApp {
             .and_then(|s| eframe::get_value(s, SETTINGS_KEY))
             .unwrap_or_default();
         settings.seed_from_launcher();
+        settings.folders = crate::folders::tidy(&settings.folders);
         let mut prefs: Prefs = cc
             .storage
             .and_then(|s| eframe::get_value(s, PREFS_KEY))
@@ -268,6 +273,8 @@ impl EppiApp {
                 live: Vec::new(),
                 now: crate::time::now(),
                 progress: Progress::default(),
+                folder_counts: Vec::new(),
+                seasons: Vec::new(),
             },
             settings,
             prefs,
@@ -287,6 +294,7 @@ impl EppiApp {
             focus_search: false,
             screenshots: tour,
         };
+        app.load_seasons();
         if app.settings.fetch_ranks {
             let codes = app.data.my_codes.clone();
             app.ranks.want(
@@ -297,6 +305,23 @@ impl EppiApp {
             );
         }
         app
+    }
+
+    /// The stored seasons for my code, and a fresh look once a day.
+    fn load_seasons(&mut self) {
+        let Some(code) = self.data.my_codes.first().cloned() else {
+            self.data.seasons.clear();
+            return;
+        };
+        let (seasons, fetched_at) = self
+            .conn
+            .as_ref()
+            .and_then(|c| db::load_seasons(c, &code).ok())
+            .unwrap_or_default();
+        self.data.seasons = seasons;
+        if self.settings.fetch_ranks && self.data.now - fetched_at > crate::ranks::FRESH_FOR {
+            self.ranks.want_seasons(&code);
+        }
     }
 
     fn toast(&mut self, text: impl Into<String>, error: bool) {
@@ -373,6 +398,7 @@ impl EppiApp {
                     self.data.live.retain(|g| g.path != game.path);
                     self.data.live.push(game);
                 }
+                library::Event::Folders(counts) => self.data.folder_counts = counts,
                 library::Event::LiveEnded(path) => {
                     self.data.live.retain(|g| g.path != path);
                 }
@@ -385,7 +411,25 @@ impl EppiApp {
     }
 
     fn handle_rank_results(&mut self) {
-        while let Ok(result) = self.ranks.results.try_recv() {
+        while let Ok(reply) = self.ranks.results.try_recv() {
+            let result = match reply {
+                crate::ranks::Reply::Ranks(result) => result,
+                crate::ranks::Reply::Seasons { code, result } => {
+                    match result {
+                        Ok(seasons) if !seasons.is_empty() => {
+                            if let Some(conn) = &self.conn {
+                                let _ = db::save_seasons(conn, &code, &seasons, self.data.now);
+                            }
+                            if self.data.my_codes.first() == Some(&code) {
+                                self.data.seasons = seasons;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => log::warn!("seasons: {error}"),
+                    }
+                    continue;
+                }
+            };
             match result {
                 Ok(records) => {
                     self.ranks.answered(&records);
@@ -475,6 +519,7 @@ impl EppiApp {
                         .collect();
                     self.data.me = Me::new(&self.data.my_codes);
                     self.data.revision += 1;
+                    self.load_seasons();
                     self.library.set_folders(self.settings.folders.clone());
                 }
                 Action::DemoLive(game) => {

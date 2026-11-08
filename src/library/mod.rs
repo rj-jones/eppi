@@ -47,6 +47,8 @@ pub enum Event {
     LiveStarted(Game),
     /// That game ended (or its file went away).
     LiveEnded(PathBuf),
+    /// The folders read, each with how many replay files it holds.
+    Folders(Vec<(PathBuf, usize)>),
     Error(String),
 }
 
@@ -66,6 +68,8 @@ pub struct Progress {
     pub total: usize,
     /// Files that couldn't be read in the last scan.
     pub unreadable: usize,
+    /// Files that are a copy of a game read from another file.
+    pub duplicates: usize,
 }
 
 pub struct Library {
@@ -81,6 +85,7 @@ impl Library {
         folders: Vec<PathBuf>,
         repaint: impl Fn() + Send + 'static,
     ) -> Self {
+        let folders = crate::folders::tidy(&folders);
         let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
         let watcher = watch(&folders, command_tx.clone());
@@ -106,6 +111,7 @@ impl Library {
 
     /// Watches `folders` instead of the ones before, and indexes them.
     pub fn set_folders(&mut self, folders: Vec<PathBuf>) {
+        let folders = crate::folders::tidy(&folders);
         self._watcher = watch(&folders, self.commands.clone());
         let _ = self.commands.send(Command::Scan(folders));
     }
@@ -192,6 +198,7 @@ impl Worker {
         let mut stats_queue: Vec<(i64, PathBuf)> = Vec::new();
         let mut stats_total = 0;
         let mut stats_done = 0;
+        let mut counts = Progress::default();
         let mut live: HashMap<PathBuf, Live> = HashMap::new();
         let mut touched: HashSet<PathBuf> = HashSet::new();
         let mut last_tick = Instant::now();
@@ -215,7 +222,7 @@ impl Worker {
             match command {
                 Some(Command::Shutdown) => return,
                 Some(Command::Scan(new_folders)) => {
-                    folders = new_folders;
+                    folders = crate::folders::tidy(&new_folders);
                     scan_wanted = true;
                 }
                 Some(Command::Fs(event)) => {
@@ -240,7 +247,7 @@ impl Worker {
 
             if scan_wanted {
                 scan_wanted = false;
-                self.scan(&conn, &pool, &folders);
+                counts = self.scan(&conn, &pool, &folders);
                 stats_queue = db::games_needing_stats(&conn, stats::VERSION).unwrap_or_default();
                 stats_queue.reverse(); // pop() takes the newest first
                 stats_total = stats_queue.len();
@@ -271,23 +278,35 @@ impl Worker {
                     phase,
                     done: stats_done,
                     total: stats_total,
-                    unreadable: 0,
+                    ..counts
                 }));
             }
         }
     }
 
     /// Indexes new and changed replays under `folders` and forgets ones that
-    /// went away.
-    fn scan(&self, conn: &rusqlite::Connection, pool: &rayon::ThreadPool, folders: &[PathBuf]) {
+    /// went away; returns the files it couldn't read and the duplicates.
+    fn scan(
+        &self,
+        conn: &rusqlite::Connection,
+        pool: &rayon::ThreadPool,
+        folders: &[PathBuf],
+    ) -> Progress {
         self.send(Event::Progress(Progress {
             phase: Phase::Listing,
             ..Default::default()
         }));
         let mut on_disk = Vec::new();
+        let mut seen = HashSet::new();
+        let mut per_folder = Vec::new();
         for folder in folders {
-            list_replays(folder, &mut on_disk);
+            let mut files = Vec::new();
+            list_replays(folder, &mut files);
+            per_folder.push((folder.clone(), files.len()));
+            // A file reached twice (a link inside a folder) is read once.
+            on_disk.extend(files.into_iter().filter(|(p, _, _)| seen.insert(p.clone())));
         }
+        self.send(Event::Folders(per_folder));
         let known = db::file_states(conn).unwrap_or_default();
         let on_disk_set: HashSet<&PathBuf> = on_disk.iter().map(|(p, _, _)| p).collect();
         // Forget files that went away, and files of folders no longer in the
@@ -305,10 +324,20 @@ impl Worker {
             .map(|(_, state)| state.id)
             .collect();
         if !gone.is_empty() {
+            let fingerprints = db::fingerprints(conn, &gone).unwrap_or_default();
             if let Err(e) = db::remove_games(conn, &gone) {
                 self.send(Event::Error(format!("Couldn't update the index: {e}")));
             }
             self.send(Event::Removed(gone));
+            // A game whose shown copy went away is shown from another copy.
+            let promoted: Vec<Game> = fingerprints
+                .into_iter()
+                .filter_map(|f| db::primary_id(conn, f).ok().flatten())
+                .filter_map(|id| db::load_game(conn, id).ok().flatten())
+                .collect();
+            if !promoted.is_empty() {
+                self.send(Event::Upserted(promoted));
+            }
         }
         let todo: Vec<(PathBuf, u64, i64)> = on_disk
             .into_iter()
@@ -333,10 +362,11 @@ impl Worker {
             let tx = conn.unchecked_transaction().ok();
             for (path, size, mtime, result) in results {
                 match result {
-                    Ok(mut game) => match db::upsert_game(conn, &game, size, mtime) {
+                    Ok(game) => match db::upsert_game(conn, &game, size, mtime) {
                         Ok(id) => {
-                            game.id = id;
-                            games.push(game);
+                            if let Some(game) = shown_copy(conn, id, game.fingerprint) {
+                                games.push(game);
+                            }
                         }
                         Err(e) => log::warn!("index {}: {e}", path.display()),
                     },
@@ -357,18 +387,22 @@ impl Worker {
                 done,
                 total,
                 unreadable,
+                duplicates: 0,
             }));
             // Leave the loop if the app is closing.
             if let Ok(Command::Shutdown) = self.commands.try_recv() {
-                return;
+                return Progress::default();
             }
         }
-        self.send(Event::Progress(Progress {
+        let counts = Progress {
             phase: Phase::Idle,
             done,
             total,
-            unreadable,
-        }));
+            unreadable: db::unreadable_count(conn).unwrap_or(unreadable),
+            duplicates: db::duplicate_count(conn).unwrap_or_default(),
+        };
+        self.send(Event::Progress(counts));
+        counts
     }
 
     /// Follows files the watcher saw: live games starting and ending, and
@@ -408,11 +442,14 @@ impl Worker {
                     continue;
                 }
                 match read::read_summary(&path) {
-                    Ok(mut game) => {
+                    Ok(game) => {
                         let (size, mtime) = size_mtime(&meta);
-                        if let Ok(id) = db::upsert_game(conn, &game, size, mtime) {
-                            game.id = id;
-                            stats_queue.push((id, path.clone()));
+                        if let Ok(id) = db::upsert_game(conn, &game, size, mtime)
+                            && let Some(game) = shown_copy(conn, id, game.fingerprint)
+                        {
+                            if game.stats_version != stats::VERSION {
+                                stats_queue.push((id, path.clone()));
+                            }
                             self.send(Event::Upserted(vec![game]));
                         }
                     }
@@ -447,6 +484,15 @@ impl Worker {
             }
         }
     }
+}
+
+/// The game just stored as `id`, as the app shows it, unless it is a copy
+/// of a game already shown from another file.
+fn shown_copy(conn: &rusqlite::Connection, id: i64, fingerprint: i64) -> Option<Game> {
+    if db::primary_id(conn, fingerprint).ok().flatten() != Some(id) {
+        return None;
+    }
+    db::load_game(conn, id).ok().flatten()
 }
 
 fn is_replay(path: &Path) -> bool {
@@ -561,5 +607,53 @@ mod tests {
             "its stats",
             |e| matches!(e, Event::Stats(s) if !s.is_empty()),
         );
+    }
+
+    fn games_after_scan(library: &Library) -> (usize, Progress) {
+        let mut shown: HashSet<i64> = HashSet::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            match library.events.recv_timeout(Duration::from_millis(200)) {
+                Ok(Event::Loaded(games) | Event::Upserted(games)) => {
+                    shown.extend(games.iter().map(|g| g.id))
+                }
+                Ok(Event::Removed(ids)) => ids.iter().for_each(|id| {
+                    shown.remove(id);
+                }),
+                Ok(Event::Progress(p)) if p.phase == Phase::Idle && p.total > 0 => {
+                    return (shown.len(), p);
+                }
+                _ => {}
+            }
+        }
+        panic!("the scan didn't finish");
+    }
+
+    #[test]
+    fn copies_in_several_folders_and_nested_folders_count_once() {
+        let Some(source) = sample_replay() else {
+            eprintln!("skipped: no replays on this machine");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir_all(a.join("sub")).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::copy(&source, a.join("sub").join("Game_1.slp")).unwrap();
+        std::fs::copy(&source, b.join("Game_1 (copy).slp")).unwrap();
+        let folders = vec![a.join("sub"), a.clone(), b.clone()];
+        let db_path = dir.path().join("eppi.sqlite");
+        {
+            let library = Library::start(db_path.clone(), folders.clone(), || {});
+            let (shown, progress) = games_after_scan(&library);
+            assert_eq!(shown, 1, "two copies, one game");
+            assert_eq!(progress.duplicates, 1);
+        }
+        // The shown copy goes away: the other one takes its place.
+        std::fs::remove_file(a.join("sub").join("Game_1.slp")).unwrap();
+        let library = Library::start(db_path, folders, || {});
+        let (shown, progress) = games_after_scan(&library);
+        assert_eq!(shown, 1);
+        assert_eq!(progress.duplicates, 0);
     }
 }

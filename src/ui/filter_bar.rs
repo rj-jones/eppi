@@ -3,12 +3,12 @@
 
 use crate::app::Data;
 use crate::melee;
-use crate::model::{Filter, Mode, Period};
+use crate::model::{Filter, Mode, Period, Season, SeasonFilter};
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui::{self, Margin, vec2};
 
-pub fn show(ui: &mut egui::Ui, filter: &mut Filter, _data: &Data) {
+pub fn show(ui: &mut egui::Ui, filter: &mut Filter, data: &Data) {
     egui::Frame::new()
         .fill(theme::SIDEBAR)
         .inner_margin(Margin::symmetric(16, 10))
@@ -16,14 +16,7 @@ pub fn show(ui: &mut egui::Ui, filter: &mut Filter, _data: &Data) {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
-                egui::ComboBox::from_id_salt("filter-period")
-                    .selected_text(filter.period.label())
-                    .width(110.0)
-                    .show_ui(ui, |ui| {
-                        for period in Period::ALL {
-                            ui.selectable_value(&mut filter.period, period, period.label());
-                        }
-                    });
+                when_picker(ui, "filter-when", filter, &data.seasons);
                 ui.separator();
                 for mode in Mode::ALL {
                     let on = filter.modes.contains(&mode);
@@ -100,6 +93,52 @@ fn stage_picker(ui: &mut egui::Ui, value: &mut Option<u16>) {
             ui.selectable_value(value, None, "Any");
             for stage in melee::LEGAL_STAGES {
                 ui.selectable_value(value, Some(stage), melee::stage_name(stage));
+            }
+        });
+}
+
+/// "When": a time period, or a ranked season (newest first). Picking one
+/// clears the other.
+pub fn when_picker(ui: &mut egui::Ui, id: &str, filter: &mut Filter, seasons: &[Season]) {
+    let selected = match &filter.season {
+        Some(season) => season.name.clone(),
+        None => filter.period.label().to_owned(),
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
+        .width(150.0)
+        .height(460.0)
+        .show_ui(ui, |ui| {
+            for period in Period::ALL {
+                let on = filter.season.is_none() && filter.period == period;
+                if ui.selectable_label(on, period.label()).clicked() {
+                    filter.period = period;
+                    filter.season = None;
+                }
+            }
+            if seasons.is_empty() {
+                return;
+            }
+            ui.separator();
+            ui.label(theme::caption("Ranked seasons"));
+            for season in seasons {
+                let on = filter.season.as_ref().is_some_and(|s| s.id == season.id);
+                let dates = match season.end {
+                    Some(end) => format!(
+                        "{} – {}",
+                        crate::time::month_label(season.start),
+                        crate::time::month_label(end)
+                    ),
+                    None => format!("since {}", crate::time::day_label(season.start)),
+                };
+                if ui
+                    .selectable_label(on, format!("{}  ·  {dates}", season.name))
+                    .on_hover_text("Games played while this season ran (add the Ranked mode for only its ranked games)")
+                    .clicked()
+                {
+                    filter.season = Some(SeasonFilter::from(season));
+                    filter.period = Period::All;
+                }
             }
         });
 }

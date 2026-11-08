@@ -49,6 +49,11 @@ pub fn day_label(unix: i64) -> String {
     local(unix).format("%b %-d").to_string()
 }
 
+/// "Oct 2026".
+pub fn month_label(unix: i64) -> String {
+    local(unix).format("%b %Y").to_string()
+}
+
 /// "2 min ago", "3 h ago", "5 days ago".
 pub fn ago(unix: i64, now: i64) -> String {
     let seconds = (now - unix).max(0);

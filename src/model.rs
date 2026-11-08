@@ -132,6 +132,8 @@ pub struct Game {
     pub stats_version: u32,
     /// Per-player numbers from the stats pass (empty before it).
     pub numbers: Vec<Numbers>,
+    /// The game apart from its file: copies of a replay share it.
+    pub fingerprint: i64,
 }
 
 /// One player's numbers in one game: what the aggregate views add up.
@@ -317,6 +319,51 @@ impl Period {
     }
 }
 
+/// A ranked season, and how one player (me) finished it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Season {
+    /// `season-6`.
+    pub id: String,
+    /// `Season 6`.
+    pub name: String,
+    /// When it started and ended (Unix seconds); no end while it runs.
+    pub start: i64,
+    pub end: Option<i64>,
+    pub rating: f64,
+    /// The rank's name ("Platinum 1").
+    pub rank: String,
+    pub sets: u32,
+    pub wins: Option<u32>,
+    pub losses: Option<u32>,
+}
+
+impl Season {
+    pub fn is_current(&self) -> bool {
+        self.end.is_none()
+    }
+}
+
+/// A season the filter keeps to: its name and dates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeasonFilter {
+    pub id: String,
+    pub name: String,
+    pub start: i64,
+    pub end: Option<i64>,
+}
+
+impl From<&Season> for SeasonFilter {
+    fn from(s: &Season) -> Self {
+        Self {
+            id: s.id.clone(),
+            name: s.name.clone(),
+            start: s.start,
+            end: s.end,
+        }
+    }
+}
+
 /// What the filter bar asks for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -330,6 +377,8 @@ pub struct Filter {
     pub their_character: Option<u8>,
     pub stage: Option<u16>,
     pub period: Period,
+    /// Only games played during this ranked season (instead of `period`).
+    pub season: Option<SeasonFilter>,
     /// Only games of mine.
     pub only_mine: bool,
     /// Matches an opponent's code or name (or either player's when the game
@@ -349,6 +398,7 @@ impl Default for Filter {
             their_character: None,
             stage: None,
             period: Period::All,
+            season: None,
             only_mine: false,
             search: String::new(),
         }
@@ -366,7 +416,7 @@ impl Filter {
             self.my_character.is_some(),
             self.their_character.is_some(),
             self.stage.is_some(),
-            self.period != Period::All,
+            self.period != Period::All || self.season.is_some(),
             self.only_mine,
         ]
         .into_iter()
@@ -389,7 +439,11 @@ impl Filter {
         {
             return false;
         }
-        if let Some(since) = self.period.since(now)
+        if let Some(season) = &self.season {
+            if game.start_at < season.start || season.end.is_some_and(|end| game.start_at >= end) {
+                return false;
+            }
+        } else if let Some(since) = self.period.since(now)
             && game.start_at < since
         {
             return false;
@@ -618,5 +672,26 @@ mod tests {
             ..Filter::default()
         };
         assert!(!fox.matches(&normal, &me, 0), "fox is mine, not theirs");
+        let season = |start, end| Filter {
+            season: Some(SeasonFilter {
+                id: "s".into(),
+                name: "S".into(),
+                start,
+                end,
+            }),
+            ..Filter::default()
+        };
+        let mut late = game(4, "", Mode::Ranked, 500, 0);
+        late.start_at = 500;
+        assert!(season(100, Some(600)).matches(&late, &me, 0));
+        assert!(
+            !season(100, Some(500)).matches(&late, &me, 0),
+            "a season ends where the next starts"
+        );
+        assert!(
+            season(400, None).matches(&late, &me, 0),
+            "the current season has no end"
+        );
+        assert!(!season(600, None).matches(&late, &me, 0));
     }
 }

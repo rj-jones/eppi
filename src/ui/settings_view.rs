@@ -5,12 +5,15 @@ use crate::app::Data;
 use crate::model::normalize_code;
 use crate::settings::{Launcher, Settings};
 use crate::ui::theme::{self, Ion};
+use crate::ui::widgets;
 use eframe::egui::{self, Margin, RichText};
 use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct State {
     new_code: String,
+    /// What the last folders added came to ("already covered by …").
+    folder_notes: Vec<String>,
 }
 
 impl State {
@@ -27,7 +30,7 @@ impl State {
                         ui.set_max_width(720.0);
                         changed |= self.codes(ui, settings);
                         ui.add_space(theme::space::XL);
-                        changed |= folders(ui, settings, data);
+                        changed |= self.folders(ui, settings, data);
                         ui.add_space(theme::space::XL);
                         playback(ui, settings);
                         ui.add_space(theme::space::XL);
@@ -84,86 +87,146 @@ impl State {
     }
 }
 
-fn folders(ui: &mut egui::Ui, settings: &mut Settings, data: &Data) -> bool {
+/// Adds `picked` folders; returns what to tell the user about them.
+fn add_folders(settings: &mut Settings, picked: Vec<PathBuf>) -> (bool, Vec<String>) {
     let mut changed = false;
-    ui.label(theme::heavy("Replay folders", theme::text::HEADING));
-    ui.label(theme::muted("Eppi reads every .slp in these folders and their subfolders, and watches them for new games."));
-    ui.add_space(theme::space::S);
-    let mut remove = None;
-    for (i, folder) in settings.folders.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(Ion::FOLDER.rich(16.0).color(theme::MUTED));
-            let exists = folder.is_dir();
-            ui.label(
-                RichText::new(folder.display().to_string()).color(if exists {
-                    theme::TEXT
-                } else {
-                    theme::WARNING
-                }),
-            );
-            if !exists {
-                ui.label(theme::muted("(not found)"));
+    let mut notes = Vec::new();
+    for folder in picked {
+        match crate::folders::add(&mut settings.folders, &folder) {
+            crate::folders::Added::Added { replaced } => {
+                changed = true;
+                if !replaced.is_empty() {
+                    notes.push(format!(
+                        "{} covers {} you had, so it took their place.",
+                        folder.display(),
+                        if replaced.len() == 1 {
+                            replaced[0].display().to_string()
+                        } else {
+                            format!("{} folders", replaced.len())
+                        },
+                    ));
+                }
             }
+            crate::folders::Added::AlreadyCovered(outer) => notes.push(format!(
+                "{} is already read as part of {}.",
+                folder.display(),
+                outer.display()
+            )),
+        }
+    }
+    (changed, notes)
+}
+
+impl State {
+    fn folders(&mut self, ui: &mut egui::Ui, settings: &mut Settings, data: &Data) -> bool {
+        let mut changed = false;
+        ui.label(theme::heavy("Replay folders", theme::text::HEADING));
+        ui.label(theme::muted(
+            "Eppi reads every .slp in these folders and their subfolders, and watches them for new games. A replay copied into more than one place counts once.",
+        ));
+        ui.add_space(theme::space::S);
+        let mut remove = None;
+        for (i, folder) in settings.folders.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(Ion::FOLDER.rich(16.0).color(theme::MUTED));
+                let exists = folder.is_dir();
+                ui.label(
+                    RichText::new(folder.display().to_string()).color(if exists {
+                        theme::TEXT
+                    } else {
+                        theme::WARNING
+                    }),
+                );
+                if !exists {
+                    ui.label(theme::muted("(not found: its games stay until it's back)"));
+                } else if let Some((_, count)) = data.folder_counts.iter().find(|(f, _)| {
+                    crate::folders::covers(f, folder) && crate::folders::covers(folder, f)
+                }) {
+                    ui.label(
+                        theme::muted(format!("{} replays", widgets::thousands(*count)))
+                            .size(theme::text::SMALL),
+                    );
+                }
+                if ui
+                    .add(egui::Button::new(Ion::CLOSE.rich(14.0).color(theme::MUTED)).frame(false))
+                    .on_hover_text("Stop reading this folder")
+                    .clicked()
+                {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            settings.folders.remove(i);
+            self.folder_notes.clear();
+            changed = true;
+        }
+        ui.horizontal(|ui| {
             if ui
-                .add(egui::Button::new(Ion::CLOSE.rich(14.0).color(theme::MUTED)).frame(false))
-                .on_hover_text("Stop reading this folder")
+                .add(theme::icon_button(Ion::ADD, "Add folders…"))
+                .on_hover_text("Pick one or more folders (hold Ctrl to pick several)")
                 .clicked()
+                && let Some(picked) = rfd::FileDialog::new()
+                    .set_title("Folders with replays")
+                    .pick_folders()
             {
-                remove = Some(i);
+                let (added, notes) = add_folders(settings, picked);
+                changed |= added;
+                self.folder_notes = notes;
+            }
+            let launcher = Launcher::detect();
+            let missing: Vec<PathBuf> = launcher
+                .replay_folders
+                .into_iter()
+                .filter(|f| {
+                    !settings
+                        .folders
+                        .iter()
+                        .any(|mine| crate::folders::covers(mine, f))
+                })
+                .collect();
+            if !missing.is_empty()
+                && ui
+                    .button("Add Slippi Launcher's folders")
+                    .on_hover_text(
+                        missing
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(
+                                "
+",
+                            ),
+                    )
+                    .clicked()
+            {
+                let (added, notes) = add_folders(settings, missing);
+                changed |= added;
+                self.folder_notes = notes;
             }
         });
-    }
-    if let Some(i) = remove {
-        settings.folders.remove(i);
-        changed = true;
-    }
-    ui.horizontal(|ui| {
-        if ui
-            .add(theme::icon_button(Ion::ADD, "Add folder…"))
-            .clicked()
-            && let Some(folder) = rfd::FileDialog::new()
-                .set_title("A folder with replays")
-                .pick_folder()
-            && !settings.folders.contains(&folder)
-        {
-            settings.folders.push(folder);
-            changed = true;
+        for note in &self.folder_notes {
+            ui.label(
+                RichText::new(note)
+                    .color(theme::WARNING)
+                    .size(theme::text::SMALL),
+            );
         }
-        let launcher = Launcher::detect();
-        let missing: Vec<PathBuf> = launcher
-            .replay_folders
-            .into_iter()
-            .filter(|f| !settings.folders.contains(f))
-            .collect();
-        if !missing.is_empty()
-            && ui
-                .button("Add Slippi Launcher's folders")
-                .on_hover_text(
-                    missing
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-                .clicked()
-        {
-            settings.folders.extend(missing);
-            changed = true;
+        let p = data.progress;
+        let mut line = format!("{} games indexed", widgets::thousands(data.games.len()));
+        if p.duplicates > 0 {
+            line.push_str(&format!(
+                " · {} duplicate cop{} skipped",
+                widgets::thousands(p.duplicates),
+                if p.duplicates == 1 { "y" } else { "ies" }
+            ));
         }
-    });
-    ui.label(
-        theme::muted(format!(
-            "{} games indexed{}",
-            crate::ui::widgets::thousands(data.games.len()),
-            if data.progress.unreadable > 0 {
-                format!(", {} files couldn't be read", data.progress.unreadable)
-            } else {
-                String::new()
-            }
-        ))
-        .size(theme::text::SMALL),
-    );
-    changed
+        if p.unreadable > 0 {
+            line.push_str(&format!(" · {} files couldn't be read", p.unreadable));
+        }
+        ui.label(theme::muted(line).size(theme::text::SMALL));
+        changed
+    }
 }
 
 fn path_row(
