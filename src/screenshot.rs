@@ -118,9 +118,11 @@ impl Tour {
         if !idle {
             self.seen_busy = true;
         }
+        // A machine with no replays (a build check) settles too, once the
+        // library has stayed idle a while.
         let settled = idle
-            && !data.games.is_empty()
-            && (self.seen_busy || started.elapsed() > Duration::from_secs(10));
+            && (self.seen_busy || started.elapsed() > Duration::from_secs(10))
+            && (!data.games.is_empty() || started.elapsed() > Duration::from_secs(20));
         if !settled && started.elapsed() < Duration::from_secs(300) {
             self.quiet_since = None;
             return false;
