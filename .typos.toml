@@ -2,5 +2,15 @@
 # install:  cargo install typos-cli
 # run:      typos
 
+[files]
+# Licence texts are copied verbatim.
+extend-exclude = ["LICENSE", "crates/eppi-stats/COPYING*", "assets/fonts/*.txt"]
+
 [default.extend-words]
-egui = "egui" # Example for how to ignore a false positive
+egui = "egui"
+# Melee: teching is rolling or getting up on landing, and FoD is
+# Fountain of Dreams.
+teching = "teching"
+teched = "teched"
+FoD = "FoD"
+Fo = "Fo"

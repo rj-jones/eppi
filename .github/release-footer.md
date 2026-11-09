@@ -5,7 +5,7 @@
 | --- | --- |
 | **Windows** (10 or 11, 64-bit) | `eppi-*-windows-x64.zip`: unzip it anywhere and run `Eppi.exe`. |
 | **macOS** (11 or newer, Apple Silicon or Intel) | `eppi-*-macos.zip`: unzip it and move `Eppi.app` to Applications. |
-| **Linux** (x86-64) | `eppi-*-linux-x64.tar.gz`: unpack it and run `./install.sh` inside, or just `./eppi`. |
+| **Linux** (x86-64, glibc 2.35+: Ubuntu 22.04 or newer) | `eppi-*-linux-x64.tar.gz`: unpack it and run `./install.sh` inside, or just `./eppi`. |
 
 The builds aren't signed with a paid certificate, so the first launch needs one extra step:
 

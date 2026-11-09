@@ -54,7 +54,7 @@ Get the latest version from the [Releases page](https://github.com/rj-jones/eppi
 
 - **Windows** (10 or 11): `eppi-…-windows-x64.zip`. Unzip it anywhere and run `Eppi.exe`.
 - **macOS** (11 or newer, Apple Silicon or Intel): `eppi-…-macos.zip`. Unzip it and move `Eppi.app` to Applications.
-- **Linux** (x86-64): `eppi-…-linux-x64.tar.gz`. Unpack it and run `./install.sh` inside to add Eppi to your app menu, or run `./eppi` as it is.
+- **Linux** (x86-64, Ubuntu 22.04 or newer, or another distro with glibc 2.35+): `eppi-…-linux-x64.tar.gz`. Unpack it and run `./install.sh` inside to add Eppi to your app menu, or run `./eppi` as it is.
 
 The downloads aren't signed with a paid certificate, so the first launch takes one extra step. On Windows, if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**. On macOS, if it says it can't check Eppi for malware, open **System Settings > Privacy & Security** and click **Open Anyway**. Each release lists checksums, and `gh attestation verify <file> --repo rj-jones/eppi` proves a download was built by this repo's release workflow.
 
