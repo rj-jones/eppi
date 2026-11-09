@@ -494,7 +494,7 @@ pub fn load_stats_json(conn: &Connection, id: i64) -> rusqlite::Result<Option<St
 }
 
 /// One rank lookup, as stored.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RankRecord {
     pub code: String,
     pub fetched_at: i64,

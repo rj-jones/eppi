@@ -1,16 +1,29 @@
 //! Looking up ranks in the background: the UI says which codes it shows,
-//! and a worker fetches the ones not looked up in the last day, a batch at
-//! a time and at most one request a second, backing off when Slippi says
-//! to slow down. It also fetches the ranked seasons' calendar (with how
-//! you finished each one).
+//! and a worker fetches the ones that aren't fresh (see [`fresh_for`]), a
+//! batch at a time and at most one request a second, backing off when
+//! Slippi says to slow down. The rows on screen come first: when you
+//! scroll past rows faster than they're looked up, the oldest asks are
+//! dropped. It also fetches the ranked seasons' calendar (with how you
+//! finished each one), and for the rank filter, opponents' past seasons.
 
 use crate::library::db::RankRecord;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
-/// How long a lookup counts as fresh.
+/// How long a lookup counts as fresh, for you and anyone you've played in
+/// the last month.
 pub const FRESH_FOR: i64 = 24 * 3_600;
+/// For someone you haven't played in a month: their rank is shown less and
+/// matters less, so it's looked up once a week.
+const FRESH_FOR_OLD_OPPONENT: i64 = 7 * 24 * 3_600;
+/// For a code no account has: it stays that way, so once a month.
+const FRESH_FOR_NO_ACCOUNT: i64 = 30 * 24 * 3_600;
+/// "Recently played" for [`fresh_for`].
+const RECENT: i64 = 30 * 24 * 3_600;
+/// At most this many codes wait in the on-screen queue; older ones are
+/// dropped (and asked for again if they're on screen again).
+const MAX_QUEUED: usize = 100;
 /// Pause between requests.
 const PACE: Duration = Duration::from_millis(1_100);
 
@@ -22,19 +35,23 @@ enum Request {
     Shutdown,
 }
 
-/// A player's code and their seasons (`None`: no account has the code).
-pub type PlayerSeasons = (String, Option<Vec<crate::model::Season>>);
+/// A player's current rank and their seasons (`None`: no account has the
+/// code).
+pub type PlayerSeasons = (RankRecord, Option<Vec<crate::model::Season>>);
 
 /// What the worker found out.
 pub enum Reply {
     Ranks(Result<Vec<RankRecord>, String>),
+    /// Codes dropped from the queue before they were looked up.
+    Dropped(Vec<String>),
     /// The seasons `code` played in (all of them since their account was
     /// made), newest first.
     Seasons {
         code: String,
         result: Result<Vec<crate::model::Season>, String>,
     },
-    /// Players' seasons (`None`: no account has the code).
+    /// Players' seasons (`None`: no account has the code), each with their
+    /// current rank, which the same request brings.
     Histories(Result<Vec<PlayerSeasons>, String>),
 }
 
@@ -69,11 +86,13 @@ impl RankService {
     }
 
     /// Asks for `codes` that aren't fresh in `known` (or all of them with
-    /// `force`).
+    /// `force`). `last_played` (when you last played each code) sets how
+    /// long a lookup stays fresh.
     pub fn want<'a>(
         &mut self,
         codes: impl IntoIterator<Item = &'a str>,
         known: &HashMap<String, RankRecord>,
+        last_played: &HashMap<String, i64>,
         now: i64,
         force: bool,
     ) {
@@ -83,10 +102,9 @@ impl RankService {
                 continue;
             }
             if !force {
-                if known
-                    .get(code)
-                    .is_some_and(|r| now - r.fetched_at < FRESH_FOR)
-                {
+                if known.get(code).is_some_and(|r| {
+                    now - r.fetched_at < fresh_for(r, last_played.get(code).copied(), now)
+                }) {
                     continue;
                 }
                 if self
@@ -153,6 +171,15 @@ impl RankService {
         }
     }
 
+    /// The worker dropped these before looking them up: they can be asked
+    /// for again as soon as they're on screen.
+    pub fn dropped(&mut self, codes: &[String]) {
+        for code in codes {
+            self.pending.remove(code);
+            self.tried.remove(code);
+        }
+    }
+
     /// After a failed request, nothing is pending any more (it's retried
     /// after the wait in [`Self::want`]).
     pub fn failed(&mut self) {
@@ -182,10 +209,14 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
         };
         match requests.recv_timeout(wait) {
             Ok(Request::Fetch(codes)) => {
-                for code in codes {
-                    if !queue.contains(&code) {
-                        queue.push_back(code);
-                    }
+                // The newest ask goes first: it's what's on screen now.
+                for code in codes.into_iter().rev() {
+                    queue.retain(|c| *c != code);
+                    queue.push_front(code);
+                }
+                if queue.len() > MAX_QUEUED {
+                    let dropped: Vec<String> = queue.drain(MAX_QUEUED..).collect();
+                    let _ = results.send(Reply::Dropped(dropped));
                 }
                 continue;
             }
@@ -218,14 +249,18 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
                 let take = eppi_rank::BATCH_SIZE.min(histories.len());
                 let batch: Vec<String> = histories.drain(..take).collect();
                 let refs: Vec<&str> = batch.iter().map(String::as_str).collect();
+                let now = crate::time::now();
                 next_request = Instant::now() + PACE;
                 let reply = match eppi_rank::fetch_histories(&refs) {
                     Ok(found) => Ok(found
                         .into_iter()
                         .zip(&batch)
-                        .map(|((_, seasons), asked)| {
+                        .map(|((lookup, seasons), asked)| {
+                            let mut record = record(&lookup, now);
+                            // Keyed by the code as the app asked for it.
+                            record.code = crate::model::normalize_code(asked);
                             (
-                                asked.clone(),
+                                record,
                                 seasons.map(|list| list.iter().map(season).collect()),
                             )
                         })
@@ -265,6 +300,19 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
             }
         }
         repaint();
+    }
+}
+
+/// How long `record` stays fresh: a day for anyone played in the last month
+/// (or with no games: you, or a player searched for), a week for older
+/// opponents, a month for a code no account has.
+pub fn fresh_for(record: &RankRecord, last_played: Option<i64>, now: i64) -> i64 {
+    if !record.found {
+        FRESH_FOR_NO_ACCOUNT
+    } else if last_played.is_some_and(|at| now - at > RECENT) {
+        FRESH_FOR_OLD_OPPONENT
+    } else {
+        FRESH_FOR
     }
 }
 
@@ -344,4 +392,32 @@ pub fn season_record(record: &RankRecord) -> Option<(u32, u32)> {
         extra["wins"].as_u64()? as u32,
         extra["losses"].as_u64()? as u32,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DAY: i64 = 24 * 3_600;
+
+    fn found(found: bool) -> RankRecord {
+        RankRecord {
+            code: "ABC#123".into(),
+            fetched_at: 0,
+            found,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn freshness_depends_on_when_you_last_played_them() {
+        let now = 400 * DAY;
+        // Played this month, or never (you, or someone searched for): a day.
+        assert_eq!(fresh_for(&found(true), Some(now - 3 * DAY), now), DAY);
+        assert_eq!(fresh_for(&found(true), None, now), DAY);
+        // Not played for over a month: a week.
+        assert_eq!(fresh_for(&found(true), Some(now - 90 * DAY), now), 7 * DAY);
+        // No account has the code: a month, however recent.
+        assert_eq!(fresh_for(&found(false), Some(now), now), 30 * DAY);
+    }
 }

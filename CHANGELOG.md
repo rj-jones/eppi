@@ -4,6 +4,12 @@ What changed in each release. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Changed
+
+- Fewer rank lookups. Filtering by rank only looks up opponents from the games your other filters keep, skips games from before ranked began, and fetches a finished season once, so a new season no longer refetches everyone. Each of those lookups also refreshes the player's current rank.
+- Opponents you haven't played in a month have their rank refreshed weekly instead of daily.
+- Scrolling quickly no longer queues lookups for rows you've scrolled past; the rows on screen go first.
+
 ## [1.0.0] - 2026-11-09
 
 The first release of the rewrite: a new app, not an update to the old one.

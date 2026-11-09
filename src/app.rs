@@ -103,6 +103,9 @@ pub struct Data {
     pub histories: HashMap<String, (HashMap<String, String>, i64)>,
     /// Rank lookups asked for and not answered yet.
     pub ranks_pending: usize,
+    /// When each player's latest game was (a lookup stays fresh longer for
+    /// someone not played in a while).
+    pub last_played: HashMap<String, i64>,
 }
 
 impl Data {
@@ -166,6 +169,17 @@ impl Data {
             .enumerate()
             .map(|(i, g)| (g.id, i))
             .collect();
+        // Newest first, so the first game seen with a player is the latest.
+        self.last_played.clear();
+        for game in &self.games {
+            for player in &game.players {
+                if !player.code.is_empty() {
+                    self.last_played
+                        .entry(player.code.clone())
+                        .or_insert(game.start_at);
+                }
+            }
+        }
         self.revision += 1;
     }
 }
@@ -288,6 +302,9 @@ pub struct EppiApp {
     filters_menu: FiltersMenu,
     /// Demo mode (`--showcase`): other players made anonymous.
     demo: bool,
+    /// What the rank filter's last look-up plan was made from, so it's
+    /// only made again when that changes.
+    rank_plan_key: Option<(u64, u64, u64, usize)>,
 }
 
 /// The navigation column's width.
@@ -359,6 +376,7 @@ impl EppiApp {
                 ranks_revision: 0,
                 ranks_pending: 0,
                 histories: HashMap::new(),
+                last_played: HashMap::new(),
             },
             settings,
             prefs,
@@ -379,6 +397,7 @@ impl EppiApp {
             screenshots: tour,
             demo,
             filters_menu: FiltersMenu::default(),
+            rank_plan_key: None,
         };
         app.load_seasons();
         app.load_histories();
@@ -397,6 +416,7 @@ impl EppiApp {
             app.ranks.want(
                 codes.iter().map(String::as_str),
                 &app.data.ranks,
+                &app.data.last_played,
                 app.data.now,
                 false,
             );
@@ -500,6 +520,7 @@ impl EppiApp {
                         self.ranks.want(
                             [opponent.code.as_str()],
                             &self.data.ranks,
+                            &self.data.last_played,
                             self.data.now,
                             false,
                         );
@@ -532,14 +553,18 @@ impl EppiApp {
         while let Ok(reply) = self.ranks.results.try_recv() {
             let result = match reply {
                 crate::ranks::Reply::Ranks(result) => result,
+                crate::ranks::Reply::Dropped(codes) => {
+                    self.ranks.dropped(&codes);
+                    continue;
+                }
                 crate::ranks::Reply::Histories(result) => {
                     match result {
                         Ok(found) => {
                             let now = self.data.now;
                             self.ranks
-                                .histories_answered(found.iter().map(|(c, _)| c.clone()));
-                            for (code, seasons) in found {
-                                let code = model::normalize_code(&code);
+                                .histories_answered(found.iter().map(|(r, _)| r.code.clone()));
+                            for (record, seasons) in found {
+                                let code = record.code.clone();
                                 if let Some(conn) = &self.conn {
                                     let _ = match &seasons {
                                         Some(list) if !list.is_empty() => {
@@ -547,7 +572,13 @@ impl EppiApp {
                                         }
                                         _ => db::save_no_account(conn, &code, now),
                                     };
+                                    // The same request brought their rank now.
+                                    if let Err(e) = db::save_rank(conn, &record) {
+                                        log::warn!("save rank: {e}");
+                                    }
                                 }
+                                self.ranks.answered(std::slice::from_ref(&record));
+                                self.data.ranks.insert(code.clone(), record);
                                 self.data.histories.insert(
                                     code,
                                     (tiers(seasons.as_deref().unwrap_or_default()), now),
@@ -642,8 +673,13 @@ impl EppiApp {
                     self.replays.reveal_game(id, &self.data, &self.derived);
                 }
                 Action::FetchRank { code, force } => {
-                    self.ranks
-                        .want([code.as_str()], &self.data.ranks, self.data.now, force);
+                    self.ranks.want(
+                        [code.as_str()],
+                        &self.data.ranks,
+                        &self.data.last_played,
+                        self.data.now,
+                        force,
+                    );
                 }
                 Action::SaveNote { code, text } => {
                     if let Some(conn) = &self.conn {
@@ -1109,6 +1145,58 @@ impl EppiApp {
             });
     }
 
+    /// What the rank filter needs looked up: for each opponent in the
+    /// games the other filters keep, their rank in the season of each game.
+    /// Games from before ranked began need nothing. A finished season needs
+    /// their history fetched after it ended (it can't change after that,
+    /// so it's fetched once); the season running now needs their current
+    /// rank, of any age. The same request brings both, so both go in one
+    /// queue, the most recently played opponents first.
+    fn plan_rank_filter(&mut self) {
+        let mut others = self.prefs.filter.clone();
+        others.their_ranks.clear();
+        let key = (
+            self.data.revision,
+            self.data.ranks_revision,
+            model::hash_str(&format!("{others:?}")),
+            self.data.seasons.len(),
+        );
+        if self.rank_plan_key == Some(key) {
+            return;
+        }
+        self.rank_plan_key = Some(key);
+        let data = &self.data;
+        let mut seen = HashSet::new();
+        let mut needed = Vec::new();
+        for game in &data.games {
+            if !others.matches(game, &data.me, data.now, |_, _| None) {
+                continue;
+            }
+            let Some(code) = game.opponent(&data.me).map(|p| p.code.as_str()) else {
+                continue;
+            };
+            if !code.contains('#') || seen.contains(code) {
+                continue;
+            }
+            let Some(season) = data
+                .seasons
+                .iter()
+                .find(|s| game.start_at >= s.start && s.end.is_none_or(|end| game.start_at < end))
+            else {
+                continue; // before ranked
+            };
+            let missing = match season.end {
+                None => !data.ranks.contains_key(code) && !data.histories.contains_key(code),
+                Some(end) => data.histories.get(code).is_none_or(|(_, at)| *at < end),
+            };
+            if missing && !self.ranks.history_recently_failed(code) {
+                seen.insert(code);
+                needed.push(code);
+            }
+        }
+        self.ranks.want_histories(needed);
+    }
+
     fn want_ranks(&mut self) {
         if !self.settings.fetch_ranks {
             return;
@@ -1128,37 +1216,12 @@ impl EppiApp {
         self.ranks.want(
             codes.iter().chain(live.iter()).map(String::as_str),
             &self.data.ranks,
+            &self.data.last_played,
             self.data.now,
             false,
         );
-        // Filtering by rank needs every opponent's rank in every season
-        // they played you: fetch the seasons of those never fetched, or
-        // fetched before the last season ended (25 a request, a request a
-        // second).
         if !self.prefs.filter.their_ranks.is_empty() {
-            let last_ended = self
-                .data
-                .seasons
-                .iter()
-                .filter_map(|s| s.end)
-                .max()
-                .unwrap_or(0);
-            let ranks = &self.ranks;
-            let missing: HashSet<&str> = self
-                .data
-                .games
-                .iter()
-                .filter_map(|g| g.opponent(&self.data.me))
-                .map(|p| p.code.as_str())
-                .filter(|code| {
-                    self.data
-                        .histories
-                        .get(*code)
-                        .is_none_or(|(_, at)| *at < last_ended)
-                        && !ranks.history_recently_failed(code)
-                })
-                .collect();
-            self.ranks.want_histories(missing);
+            self.plan_rank_filter();
         }
         self.data.ranks_pending = self.ranks.pending_count();
     }

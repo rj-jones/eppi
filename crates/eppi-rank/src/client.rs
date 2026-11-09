@@ -277,7 +277,7 @@ fn describe_error(e: &ErrorJson) -> String {
 }
 
 /// Matches a successful reply to the codes that were asked for, in order.
-fn parse_response(codes: &[String], body: &str) -> Result<Vec<Lookup>, Error> {
+pub(crate) fn parse_response(codes: &[String], body: &str) -> Result<Vec<Lookup>, Error> {
     let envelope: Envelope =
         serde_json::from_str(body).map_err(|e| Error::InvalidResponse(e.to_string()))?;
     if !envelope.errors.is_empty() {

@@ -2,11 +2,12 @@
 
 use serde::Deserialize;
 
-use crate::Rank;
-use crate::client::{Error, agent, graphql_errors, normalize_code, post};
+use crate::client::{Error, agent, graphql_errors, normalize_code, parse_response, post};
+use crate::{Lookup, Rank};
 
-/// A player's code and their seasons (`None`: no account has the code).
-pub type History = (String, Option<Vec<Season>>);
+/// A player's lookup (their profile this season, as [`crate::fetch`] gives
+/// it) and every season they played (`None`: no account has the code).
+pub type History = (Lookup, Option<Vec<Season>>);
 
 /// One ranked season and a player's profile in it.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +33,9 @@ pub struct Season {
 
 /// What is asked of each player.
 const USER_FIELDS: &str = "rankedNetplayProfile { ...p } rankedNetplayProfileHistory { ...p }";
+/// For a batch, the profile fields [`crate::fetch`] asks for as well, so
+/// one request also refreshes each player's current rank.
+const BATCH_FIELDS: &str = "displayName connectCode { code } status     rankedNetplayProfile { ...p continent characters { character gameCount } }     rankedNetplayProfileHistory { ...p }";
 const FRAGMENT: &str = "fragment p on NetplayProfile { ratingOrdinal ratingUpdateCount wins losses \
     dailyGlobalPlacement dailyRegionalPlacement season { id name status startedAt endedAt } }";
 
@@ -48,8 +52,8 @@ pub fn fetch_seasons(code: &str) -> Result<Vec<Season>, Error> {
     parse(&body)
 }
 
-/// Every season of each player in `codes`: one result per code, in order,
-/// `None` when no account has the code. Up to [`crate::BATCH_SIZE`] codes per
+/// Every season of each player in `codes`, and their current profile: one
+/// result per code, in order, with no seasons when no account has the code. Up to [`crate::BATCH_SIZE`] codes per
 /// request (with GraphQL aliases), one request after another.
 pub fn fetch_histories(codes: &[&str]) -> Result<Vec<History>, Error> {
     let agent = agent();
@@ -58,7 +62,7 @@ pub fn fetch_histories(codes: &[&str]) -> Result<Vec<History>, Error> {
         let codes: Vec<String> = chunk.iter().map(|c| normalize_code(c)).collect();
         let params: Vec<String> = (0..codes.len()).map(|i| format!("$c{i}: String")).collect();
         let fields: Vec<String> = (0..codes.len())
-            .map(|i| format!("u{i}: getUser(connectCode: $c{i}) {{ {USER_FIELDS} }}"))
+            .map(|i| format!("u{i}: getUser(connectCode: $c{i}) {{ {BATCH_FIELDS} }}"))
             .collect();
         let variables: serde_json::Map<String, serde_json::Value> = codes
             .iter()
@@ -87,15 +91,16 @@ fn parse_batch(codes: &[String], body: &str) -> Result<Vec<History>, Error> {
             messages,
         });
     }
+    let lookups = parse_response(codes, body)?;
     let envelope: BatchEnvelope =
         serde_json::from_str(body).map_err(|e| Error::InvalidResponse(e.to_string()))?;
     let mut users = envelope.data.unwrap_or_default();
-    Ok(codes
-        .iter()
+    Ok(lookups
+        .into_iter()
         .enumerate()
-        .map(|(i, code)| {
+        .map(|(i, lookup)| {
             let seasons = users.remove(&format!("u{i}")).flatten().map(seasons_of);
-            (code.clone(), seasons)
+            (lookup, seasons)
         })
         .collect())
 }
@@ -222,9 +227,23 @@ mod tests {
             "u1":null}}"#;
         let codes = ["A#1".to_owned(), "B#2".to_owned()];
         let out = parse_batch(&codes, body).unwrap();
-        assert_eq!(out[0].0, "A#1");
+        assert_eq!(out[0].0.code(), "A#1");
+        assert_eq!(out[0].0.profile().unwrap().rank, Rank::Gold1);
         assert_eq!(out[0].1.as_ref().unwrap()[0].rank, Rank::Gold1);
-        assert_eq!(out[1], ("B#2".to_owned(), None));
+        assert_eq!(out[1], (Lookup::NotFound("B#2".to_owned()), None));
+    }
+
+    /// Hits the real API. Run with `cargo test -p eppi-rank -- --ignored`.
+    #[test]
+    #[ignore = "makes a live request to Slippi"]
+    fn live_histories_bring_the_current_profile() {
+        let out = fetch_histories(&["BEAN#888", "NOBODY#99999"]).expect("live lookup");
+        let profile = out[0].0.profile().expect("a profile");
+        assert_eq!(profile.connect_code, "BEAN#888");
+        assert!(profile.season.is_some());
+        assert!(!out[0].1.as_ref().expect("seasons").is_empty());
+        assert_eq!(out[1], (Lookup::NotFound("NOBODY#99999".into()), None));
+        println!("{profile:#?}");
     }
 
     #[test]
