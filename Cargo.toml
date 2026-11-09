@@ -8,7 +8,7 @@ rust-version = "1.95"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/rj-jones/eppi"
 homepage = "https://github.com/rj-jones/eppi"
-authors = ["rj-jones <rjjones@fastmail.com>"]
+authors = ["rj-jones <85085648+rj-jones@users.noreply.github.com>"]
 
 [workspace.dependencies]
 peppi = "2.1.2"
