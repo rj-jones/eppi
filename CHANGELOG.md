@@ -4,11 +4,21 @@ What changed in each release. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-09
+
+### Fixed
+
+- On an opponent's page, the rows under "On each stage" and "Against their characters" no longer swap places while you move the mouse or scroll.
+
 ### Changed
 
 - Fewer rank lookups. Filtering by rank only looks up opponents from the games your other filters keep, skips games from before ranked began, and fetches a finished season once, so a new season no longer refetches everyone. Each of those lookups also refreshes the player's current rank.
 - Opponents you haven't played in a month have their rank refreshed weekly instead of daily.
 - Scrolling quickly no longer queues lookups for rows you've scrolled past; the rows on screen go first.
+
+### Security
+
+- Updated `tar`, `bytes`, `xxhash-rust`, `slab` and `rand` to versions that fix known advisories (GHSA-gchp-q4r4-x4ff, GHSA-j4xf-2g29-59ph, GHSA-3pv8-6f4r-ffg2, GHSA-434x-w66g-qw3r, GHSA-6g2r-675j-hx59, GHSA-qx2v-8332-m4fv, GHSA-cq8v-f236-94qc).
 
 ## [1.0.0] - 2026-11-09
 
@@ -31,5 +41,6 @@ The first release of the rewrite: a new app, not an update to the old one.
 
 - Licensed under GPL-3.0-or-later (the stats crate, a port of slippi-js, under LGPL-3.0-or-later). Earlier versions were MIT or Apache-2.0.
 
-[Unreleased]: https://github.com/rj-jones/eppi/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/rj-jones/eppi/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/rj-jones/eppi/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/rj-jones/eppi/releases/tag/v1.0.0

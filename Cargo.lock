@@ -1141,7 +1141,7 @@ checksum = "cfc1cc505827f4c23eedc297975a0fd038268d41293f389dd8ff3b574aefab19"
 
 [[package]]
 name = "eppi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "dirs",
