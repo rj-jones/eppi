@@ -6,9 +6,11 @@
 #   scripts/install.sh --uninstall   remove what it installed (your index and
 #                                    settings stay, see below)
 #
-# macOS: ~/Applications/Eppi.app (Spotlight and Launchpad find it). The app
-#   is signed ad hoc so macOS runs it, and gets a bundle id so its
-#   notifications say "Eppi".
+# The Linux download from the Releases page has this script next to a built
+# eppi; run it there and it installs that instead of building.
+#
+# macOS: ~/Applications/Eppi.app (Spotlight and Launchpad find it), made by
+#   scripts/macos-app.sh.
 # Linux: ~/.local/bin/eppi, with an icon and a desktop entry so your
 #   desktop's app menu lists it.
 #
@@ -19,8 +21,16 @@
 # or ~/.local/share/eppi (Linux); delete that folder to remove everything.
 set -euo pipefail
 
-repo="$(cd "$(dirname "$0")/.." && pwd)"
-version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/Cargo.toml" | head -1)"
+here="$(cd "$(dirname "$0")" && pwd)"
+repo="$(cd "$here/.." && pwd)"
+if [ -x "$here/eppi" ] && [ -f "$here/eppi.png" ]; then
+    # A release download: install the eppi beside this script.
+    prebuilt=true
+    version="$("$here/eppi" --version | cut -d' ' -f2)"
+else
+    prebuilt=false
+    version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/Cargo.toml" | head -1)"
+fi
 uninstall=false
 [ "${1:-}" = "--uninstall" ] && uninstall=true
 
@@ -40,53 +50,8 @@ Darwin)
     fi
     (cd "$repo" && cargo build --release -p eppi)
 
-    rm -rf "$app"
-    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp "$repo/target/release/eppi" "$app/Contents/MacOS/eppi"
-
-    # The icon, at each size an iconset names, from the 256 px PNG (sizes
-    # above it would only be blown up, so there's no 256@2x or 512).
-    work="$(mktemp -d)"
-    iconset="$work/eppi.iconset"
-    mkdir -p "$iconset"
-    icon() {
-        sips -z "$1" "$1" "$repo/assets/icon-256.png" --out "$iconset/$2" >/dev/null
-    }
-    icon 16 icon_16x16.png
-    icon 32 icon_16x16@2x.png
-    icon 32 icon_32x32.png
-    icon 64 icon_32x32@2x.png
-    icon 128 icon_128x128.png
-    icon 256 icon_128x128@2x.png
-    icon 256 icon_256x256.png
-    iconutil -c icns "$iconset" -o "$app/Contents/Resources/eppi.icns"
-    rm -rf "$work"
-
-    cat > "$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key><string>Eppi</string>
-    <key>CFBundleDisplayName</key><string>Eppi</string>
-    <key>CFBundleIdentifier</key><string>io.github.rj-jones.eppi</string>
-    <key>CFBundleExecutable</key><string>eppi</string>
-    <key>CFBundleIconFile</key><string>eppi</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>$version</string>
-    <key>CFBundleVersion</key><string>$version</string>
-    <key>LSMinimumSystemVersion</key><string>11.0</string>
-    <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
-    <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-PLIST
-
-    # Ad hoc: enough for macOS to run a build made on this Mac.
-    # (codesign's own message, if it fails, stays on stderr.)
-    if ! codesign --force --deep --sign - "$app" >/dev/null; then
-        echo "codesign failed (above); the app may still open"
-    fi
+    mkdir -p "$(dirname "$app")"
+    "$repo/scripts/macos-app.sh" "$repo/target/release/eppi" "$app" >/dev/null
     echo "Installed $app (Eppi $version)"
     ;;
 
@@ -103,10 +68,17 @@ Linux)
         echo "Removed $bin, its icon and its desktop entry"
         exit 0
     fi
-    (cd "$repo" && cargo build --release -p eppi)
+    if $prebuilt; then
+        built="$here/eppi"
+        icon_png="$here/eppi.png"
+    else
+        (cd "$repo" && cargo build --release -p eppi)
+        built="$repo/target/release/eppi"
+        icon_png="$repo/assets/icon-256.png"
+    fi
     mkdir -p "$(dirname "$bin")" "$(dirname "$icon")" "$(dirname "$desktop")"
-    install -m 755 "$repo/target/release/eppi" "$bin"
-    install -m 644 "$repo/assets/icon-256.png" "$icon"
+    install -m 755 "$built" "$bin"
+    install -m 644 "$icon_png" "$icon"
     cat > "$desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application

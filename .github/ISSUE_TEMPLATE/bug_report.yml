@@ -1,0 +1,41 @@
+name: Bug report
+description: Something in Eppi doesn't work or looks wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead. A screenshot helps a lot.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Eppi version
+      description: At the bottom of Settings.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: Windows 11 24H2, macOS 15.3, Ubuntu 24.04…
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: >
+        If it's about one replay's stats, say which numbers differ from Slippi Launcher's.
+        You can attach the .slp (zip it first), but it holds the names and codes of everyone in the game.

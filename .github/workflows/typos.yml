@@ -1,19 +1,21 @@
-# Copied from https://github.com/rerun-io/rerun_template
-
 # https://github.com/crate-ci/typos
-# Add exceptions to `.typos.toml`
-# install and run locally: cargo install typos-cli && typos
+# Add exceptions to `.typos.toml`.
+# To run it locally: cargo install typos-cli && typos
 
-name: Spell Check
-on: [pull_request]
+name: Spell check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   run:
-    name: Spell Check
+    name: Spell check
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Actions Repository
-        uses: actions/checkout@v4
-
-      - name: Check spelling of entire workspace
-        uses: crate-ci/typos@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1

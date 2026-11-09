@@ -1,6 +1,10 @@
 //! Slippi replay statistics: a port of slippi-js's `getStats()` and `getWinners()` on top of
 //! [peppi].
 //!
+//! Licensed under the GNU LGPL v3.0 or later, as is slippi-js
+//! (<https://github.com/project-slippi/slippi-js>, by Project Slippi), which this ports. See
+//! `COPYING.LESSER` and `COPYING` next to this crate's `Cargo.toml`.
+//!
 //! ```no_run
 //! let game = eppi_stats::read_replay("Game_20250515T114102.slp".as_ref()).unwrap();
 //! let stats = eppi_stats::compute(&game);

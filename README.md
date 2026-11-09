@@ -1,10 +1,16 @@
 # Eppi
 
+[![CI](https://github.com/rj-jones/eppi/actions/workflows/rust.yml/badge.svg)](https://github.com/rj-jones/eppi/actions/workflows/rust.yml)
+[![Latest release](https://img.shields.io/github/v/release/rj-jones/eppi)](https://github.com/rj-jones/eppi/releases/latest)
+[![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue)](LICENSE)
+
 A fast desktop app for your [Slippi](https://slippi.gg/) replays: sets, stats, ranks and the people you play.
 
 ![Eppi's replay list, with a set opened and one game's stats in the side pane](docs/screenshots/replays.png)
 
 Eppi reads every replay in your Slippi folders once and keeps an index, so it never reads them all again: after that it opens straight to your games. It watches the folders while you play. When a game starts, it shows who you're playing, their rank and your record against them.
+
+**[Download Eppi](https://github.com/rj-jones/eppi/releases/latest)** for Windows, macOS or Linux.
 
 ## What it does
 
@@ -44,7 +50,17 @@ The screenshots use made-up names and codes for other players (`eppi --showcase`
 
 ## Install
 
-On Windows:
+Get the latest version from the [Releases page](https://github.com/rj-jones/eppi/releases/latest):
+
+- **Windows** (10 or 11): `eppi-…-windows-x64.zip`. Unzip it anywhere and run `Eppi.exe`.
+- **macOS** (11 or newer, Apple Silicon or Intel): `eppi-…-macos.zip`. Unzip it and move `Eppi.app` to Applications.
+- **Linux** (x86-64): `eppi-…-linux-x64.tar.gz`. Unpack it and run `./install.sh` inside to add Eppi to your app menu, or run `./eppi` as it is.
+
+The downloads aren't signed with a paid certificate, so the first launch takes one extra step. On Windows, if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**. On macOS, if it says it can't check Eppi for malware, open **System Settings > Privacy & Security** and click **Open Anyway**. Each release lists checksums, and `gh attestation verify <file> --repo rj-jones/eppi` proves a download was built by this repo's release workflow.
+
+### Build it yourself
+
+You need Rust 1.95 or newer. On Windows:
 
 ```powershell
 pwsh -File scripts\install.ps1              # builds, copies to %LOCALAPPDATA%\Programs\Eppi, adds a Start menu entry
@@ -58,7 +74,11 @@ scripts/install.sh               # macOS: ~/Applications/Eppi.app; Linux: ~/.loc
 scripts/install.sh --uninstall   # removes them
 ```
 
-Or run it from the repo with `cargo run --release`. Eppi needs Rust 1.95 or newer; to build with it without changing your default toolchain, put `RUSTUP_TOOLCHAIN=1.95.0` in front of the command. Windows is where Eppi is used day to day. macOS has passed its build, tests and a run on an Apple Silicon Mac, but playing replays in Dolphin there hasn't been tried yet.
+Or run it from the repo with `cargo run --release`. To build with Rust 1.95 without changing your default toolchain, put `RUSTUP_TOOLCHAIN=1.95.0` in front of the command.
+
+Windows is where Eppi is used day to day. macOS and Linux build and pass the tests, and Eppi has run on both, but playing replays in Dolphin there hasn't been tried yet.
+
+## Using it
 
 The first time it starts, Eppi takes your connect code and replay folder from Slippi Launcher. In Settings, add alt codes so their games count as yours, and add every folder that holds replays. Folders inside each other are read once, and a replay copied into several places counts once. The index lives in `%LOCALAPPDATA%\Eppi` on Windows, `~/Library/Application Support/eppi` on macOS and `~/.local/share/eppi` on Linux.
 
@@ -77,10 +97,18 @@ cargo test --workspace
 cargo run --release -- --showcase docs/screenshots   # the screenshots above, then quits
 ```
 
+## Contributing
+
+Bug reports and ideas go in [Issues](https://github.com/rj-jones/eppi/issues). To work on the code, see [CONTRIBUTING.md](CONTRIBUTING.md). To report a security problem privately, see [SECURITY.md](SECURITY.md). [CHANGELOG.md](CHANGELOG.md) lists what changed in each release.
+
 ## Credits
 
-The character, stage and rank art comes from [Slippi Launcher](https://github.com/project-slippi/slippi-launcher). Replays are read with [peppi](https://github.com/hohav/peppi), and the stats follow [slippi-js](https://github.com/project-slippi/slippi-js). Icons are [Ionicons](https://ionic.io/ionicons) (MIT), and the heading font is Ubuntu (Ubuntu Font Licence).
+Replays are read with [peppi](https://github.com/hohav/peppi), and the stats are a port of [slippi-js](https://github.com/project-slippi/slippi-js). The rank tiers follow [Slippi Launcher](https://github.com/project-slippi/slippi-launcher), which is also where the character, stage and rank art and the app icon come from. Icons are [Ionicons](https://ionic.io/ionicons), and the heading font is Ubuntu. [assets/README.md](assets/README.md) lists every asset's source and terms.
 
-Eppi isn't affiliated with Project Slippi or Nintendo.
+Eppi isn't affiliated with or endorsed by Project Slippi or Nintendo. *Super Smash Bros. Melee* and its characters are Nintendo's.
 
-Licensed under MIT or Apache-2.0.
+## Licence
+
+Eppi is free software under the [GNU General Public License v3.0 or later](LICENSE). `crates/eppi-stats`, the port of slippi-js, is under the [GNU Lesser General Public License v3.0 or later](crates/eppi-stats/COPYING.LESSER), the same as slippi-js. The art in `assets/` isn't covered by either; see [assets/README.md](assets/README.md).
+
+Versions before 1.0.0 were released under MIT or Apache-2.0.

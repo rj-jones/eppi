@@ -1,14 +1,23 @@
-on: [push, pull_request, workflow_dispatch]
-
 name: CI
 
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   RUSTFLAGS: -D warnings
   CARGO_TERM_COLOR: always
 
+# Actions are pinned to a commit; the comment says which release it is.
 jobs:
   check:
     name: Lint and test (${{ matrix.os }})
@@ -16,56 +25,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Linux packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libdbus-1-dev
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
 
-  build:
-    name: Build ${{ matrix.target }}
-    needs: check
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            extension: .exe
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+  msrv:
+    name: Builds on Rust 1.95 (the minimum)
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
         with:
-          targets: ${{ matrix.target }}
+          toolchain: "1.95"
       - name: Linux packages
-        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libdbus-1-dev
-      - run: cargo build --release -p eppi --target ${{ matrix.target }}
-      - name: Rename
-        shell: bash
-        run: cp target/${{ matrix.target }}/release/eppi${{ matrix.extension }} eppi-${{ matrix.target }}${{ matrix.extension }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: eppi-${{ matrix.target }}${{ matrix.extension }}
-          path: eppi-${{ matrix.target }}${{ matrix.extension }}
-      - uses: svenstaro/upload-release-action@v2
-        name: Upload binaries to release
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: eppi-${{ matrix.target }}${{ matrix.extension }}
-          asset_name: eppi-${{ matrix.target }}${{ matrix.extension }}
-          tag: ${{ github.ref }}
-          overwrite: true
+      - run: cargo check --workspace --locked

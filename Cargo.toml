@@ -5,7 +5,9 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.95"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/rj-jones/eppi"
+homepage = "https://github.com/rj-jones/eppi"
 authors = ["rj-jones <rjjones@fastmail.com>"]
 
 [workspace.dependencies]
@@ -22,6 +24,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["slippi", "melee", "replay", "ssbm", "egui"]
+categories = ["games"]
+publish = false
 default-run = "eppi"
 
 [dependencies]

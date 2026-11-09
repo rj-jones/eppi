@@ -1,0 +1,16 @@
+name: Idea
+description: Something you'd like Eppi to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+      description: What you're trying to do, and how Eppi gets in the way or could help.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Sketches, screenshots, or how another tool does it.

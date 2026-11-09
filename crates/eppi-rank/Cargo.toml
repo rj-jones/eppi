@@ -5,6 +5,9 @@ description = "Slippi ranked profile lookups by connect code."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["slippi", "melee", "ranked", "ssbm"]
+categories = ["games", "api-bindings"]
 authors.workspace = true
 
 [dependencies]

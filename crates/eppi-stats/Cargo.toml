@@ -4,7 +4,11 @@ version = "1.0.0"
 description = "Slippi replay statistics (a port of slippi-js's stats) on top of peppi."
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+# A port of slippi-js, so under its licence (LGPL-3.0) rather than the app's.
+license = "LGPL-3.0-or-later"
+repository.workspace = true
+keywords = ["slippi", "melee", "replay", "ssbm", "stats"]
+categories = ["games", "parser-implementations"]
 authors.workspace = true
 
 [dependencies]
