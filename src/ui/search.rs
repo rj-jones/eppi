@@ -102,7 +102,11 @@ impl Search {
             }
         }
         let mut people: Vec<Person> = people.into_values().collect();
-        people.sort_by_key(|p| std::cmp::Reverse((p.games, p.last)));
+        people.sort_by(|a, b| {
+            (b.games, b.last)
+                .cmp(&(a.games, a.last))
+                .then_with(|| a.code.cmp(&b.code))
+        });
         self.people = people;
     }
 

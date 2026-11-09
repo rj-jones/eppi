@@ -74,7 +74,7 @@ pub fn summarize(games: &[Game], order: &[usize], me: &Me) -> Vec<Summary> {
                 .into_iter()
                 .map(|(c, (costume, n))| (c, costume, n))
                 .collect();
-            used.sort_by_key(|u| std::cmp::Reverse(u.2));
+            used.sort_by_key(|u| (std::cmp::Reverse(u.2), u.0));
             summary.characters = used;
             summary
         })
@@ -567,8 +567,15 @@ fn breakdowns(ui: &mut egui::Ui, summary: &Summary, data: &Data, derived: &Deriv
         bump(by_stage.entry(game.stage).or_default());
     }
     ui.label(theme::caption("Against their characters"));
+    // Built fresh each frame from a HashMap, whose order is random, so
+    // ties need a fixed order or the rows swap places on every repaint.
     let mut characters: Vec<_> = by_character.into_iter().collect();
-    characters.sort_by_key(|c| std::cmp::Reverse(c.1.0 + c.1.1));
+    characters.sort_by(|a, b| {
+        (b.1.0 + b.1.1)
+            .cmp(&(a.1.0 + a.1.1))
+            .then_with(|| melee::character_name(a.0.0).cmp(melee::character_name(b.0.0)))
+            .then(a.0.1.cmp(&b.0.1))
+    });
     for ((character, costume), (w, l)) in characters.into_iter().filter(|(_, (w, l))| w + l > 0) {
         ui.horizontal(|ui| {
             widgets::stock_icon(ui, character, costume, 20.0);
@@ -586,7 +593,11 @@ fn breakdowns(ui: &mut egui::Ui, summary: &Summary, data: &Data, derived: &Deriv
     ui.add_space(theme::space::S);
     ui.label(theme::caption("On each stage"));
     let mut stages: Vec<_> = by_stage.into_iter().collect();
-    stages.sort_by_key(|s| std::cmp::Reverse(s.1.0 + s.1.1));
+    stages.sort_by(|a, b| {
+        (b.1.0 + b.1.1)
+            .cmp(&(a.1.0 + a.1.1))
+            .then_with(|| melee::stage_name(a.0).cmp(melee::stage_name(b.0)))
+    });
     for (stage, (w, l)) in stages.into_iter().filter(|(_, (w, l))| w + l > 0) {
         ui.horizontal(|ui| {
             ui.label(melee::stage_name(stage));

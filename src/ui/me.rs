@@ -764,9 +764,11 @@ enum Breakdown {
     Character,
 }
 
-fn sorted<K>(map: HashMap<K, Record>) -> Vec<(K, Record)> {
+/// Most games first; ties by key, so the order doesn't depend on the
+/// HashMap's.
+fn sorted<K: Ord>(map: HashMap<K, Record>) -> Vec<(K, Record)> {
     let mut v: Vec<(K, Record)> = map.into_iter().collect();
-    v.sort_by_key(|r| std::cmp::Reverse(r.1.total()));
+    v.sort_by(|a, b| b.1.total().cmp(&a.1.total()).then_with(|| a.0.cmp(&b.0)));
     v
 }
 
@@ -914,9 +916,9 @@ impl Report {
                 .collect();
             if by_damage {
                 v.retain(|r| r.1 >= 5);
-                v.sort_by(|a, b| b.2.total_cmp(&a.2));
+                v.sort_by(|a, b| b.2.total_cmp(&a.2).then(a.0.cmp(&b.0)));
             } else {
-                v.sort_by_key(|r| std::cmp::Reverse(r.1));
+                v.sort_by_key(|r| (std::cmp::Reverse(r.1), r.0));
             }
             v
         };
