@@ -4,6 +4,8 @@ What changed in each release. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-11
+
 ### Fixed
 
 - On Windows, `eppi.exe` (in Explorer, the taskbar and the Start menu) now has the Grandmaster badge like the window does, at every size, instead of the old "e" icon.
@@ -45,6 +47,7 @@ The first release of the rewrite: a new app, not an update to the old one.
 
 - Licensed under GPL-3.0-or-later (the stats crate, a port of slippi-js, under LGPL-3.0-or-later). Earlier versions were MIT or Apache-2.0.
 
-[Unreleased]: https://github.com/rj-jones/eppi/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/rj-jones/eppi/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/rj-jones/eppi/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/rj-jones/eppi/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/rj-jones/eppi/releases/tag/v1.0.0
