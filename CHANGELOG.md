@@ -4,6 +4,10 @@ What changed in each release. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, `eppi.exe` (in Explorer, the taskbar and the Start menu) now has the Grandmaster badge like the window does, at every size, instead of the old "e" icon.
+
 ## [1.0.1] - 2026-11-09
 
 ### Fixed
