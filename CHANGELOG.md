@@ -4,6 +4,14 @@ What changed in each release. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Added
+
+- A button beside an opponent's code opens their Slippi profile in your browser.
+
+### Fixed
+
+- The copy button beside an opponent's code, and clicking a replay's file path, now copy to the clipboard. Before, they said "Copied" and copied nothing.
+
 ## [1.0.2] - 2026-11-11
 
 ### Fixed

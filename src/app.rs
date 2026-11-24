@@ -245,6 +245,8 @@ pub enum Action {
     CloseStats,
     ShowFile(PathBuf),
     CopyText(String),
+    /// Open a web page in the browser.
+    OpenUrl(String),
     /// Show the opponent in the Opponents view.
     GoToOpponent(String),
     /// Show the game in the Replays view.
@@ -661,6 +663,11 @@ impl EppiApp {
                 Action::CopyText(text) => {
                     ctx.copy_text(text);
                     self.toast("Copied", false);
+                }
+                Action::OpenUrl(url) => {
+                    if let Err(error) = open::that(&url) {
+                        self.toast(format!("Couldn't open the browser: {error}"), true);
+                    }
                 }
                 Action::GoToOpponent(code) => {
                     self.stats = None;

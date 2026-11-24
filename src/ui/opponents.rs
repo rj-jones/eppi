@@ -486,6 +486,17 @@ fn opponent_header(ui: &mut egui::Ui, summary: &Summary, data: &Data, actions: &
                 {
                     actions.push(Action::CopyText(summary.code.clone()));
                 }
+                if let Some(url) = crate::model::profile_url(&summary.code)
+                    && ui
+                        .add(
+                            egui::Button::new(Ion::OPEN.rich(13.0).color(theme::MUTED))
+                                .frame(false),
+                        )
+                        .on_hover_text("Open their Slippi profile in your browser")
+                        .clicked()
+                {
+                    actions.push(Action::OpenUrl(url));
+                }
             });
         });
     });

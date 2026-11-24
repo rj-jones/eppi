@@ -282,6 +282,32 @@ pub fn normalize_code(code: &str) -> String {
     code.trim().replace('＃', "#").to_uppercase()
 }
 
+/// The page for `code` on slippi.gg, or `None` when it isn't a code.
+///
+/// A code comes from a replay file, so only letters and digits get into
+/// the address: `BEAN#888` → `https://slippi.gg/user/bean-888`.
+pub fn profile_url(code: &str) -> Option<String> {
+    let code = normalize_code(code);
+    let (tag, number) = code.split_once('#')?;
+    let plain = |s: &str, digits: bool| {
+        !s.is_empty()
+            && s.len() <= 16
+            && s.chars().all(|c| {
+                if digits {
+                    c.is_ascii_digit()
+                } else {
+                    c.is_ascii_alphanumeric()
+                }
+            })
+    };
+    (plain(tag, false) && plain(number, true)).then(|| {
+        format!(
+            "https://slippi.gg/user/{}-{number}",
+            tag.to_ascii_lowercase()
+        )
+    })
+}
+
 /// Date presets for the filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Period {
@@ -672,6 +698,26 @@ pub fn hash_str(value: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_addresses_come_from_codes() {
+        assert_eq!(
+            profile_url("BEAN#888").as_deref(),
+            Some("https://slippi.gg/user/bean-888")
+        );
+        assert_eq!(
+            profile_url(" a1＃0 ").as_deref(),
+            Some("https://slippi.gg/user/a1-0")
+        );
+        // Not a code, so there's nothing to open.
+        for bad in ["", "BEAN", "#888", "BEAN#", "BEAN#8a", "BE AN#888"] {
+            assert_eq!(profile_url(bad), None, "{bad:?}");
+        }
+        // A replay file can hold anything: none of it reaches the address.
+        for bad in ["A/../B#1", "A?x=1#2", "A#1#2", "A&calc#1", "ÉA#1"] {
+            assert_eq!(profile_url(bad), None, "{bad:?}");
+        }
+    }
 
     fn player(port: u8, code: &str, character: u8) -> Player {
         Player {
