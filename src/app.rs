@@ -98,9 +98,9 @@ pub struct Data {
     pub seasons: Vec<model::Season>,
     /// Bumped whenever a rank arrives.
     pub ranks_revision: u64,
-    /// Each player's rank (its name) in each season, by season id, as
-    /// fetched, and when; for the rank filter.
-    pub histories: HashMap<String, (HashMap<String, String>, i64)>,
+    /// Each player's seasons as fetched (newest first; none when no account
+    /// has the code), and when: for the rank filter and an opponent's page.
+    pub histories: HashMap<String, (Vec<model::Season>, i64)>,
     /// Rank lookups asked for and not answered yet.
     pub ranks_pending: usize,
     /// When each player's latest game was (a lookup stays fresh longer for
@@ -132,14 +132,15 @@ impl Data {
                 .found
                 .then(|| model::RankTier::of(record.rank.as_deref().unwrap_or("")));
         }
-        let (ranks, _) = self.histories.get(code)?;
-        if ranks.is_empty() {
+        let (theirs, _) = self.histories.get(code)?;
+        if theirs.is_empty() {
             return None; // no account
         }
         Some(
-            ranks
-                .get(&season.id)
-                .map_or(model::RankTier::Unranked, |rank| model::RankTier::of(rank)),
+            theirs
+                .iter()
+                .find(|s| s.id == season.id)
+                .map_or(model::RankTier::Unranked, |s| model::RankTier::of(&s.rank)),
         )
     }
 
@@ -150,13 +151,14 @@ impl Data {
             .seasons
             .iter()
             .find(|s| !s.is_current() && at >= s.start && s.end.is_some_and(|end| at < end))?;
-        let (ranks, _) = self.histories.get(code)?;
-        if ranks.is_empty() {
+        let (theirs, _) = self.histories.get(code)?;
+        if theirs.is_empty() {
             return None;
         }
-        let rank = ranks
-            .get(&season.id)
-            .map_or("Unranked".to_owned(), |r| display_rank(r));
+        let rank = theirs
+            .iter()
+            .find(|s| s.id == season.id)
+            .map_or("Unranked".to_owned(), |s| display_rank(&s.rank));
         Some((&season.name, rank))
     }
 
@@ -307,11 +309,18 @@ pub struct EppiApp {
     /// What the rank filter's last look-up plan was made from, so it's
     /// only made again when that changes.
     rank_plan_key: Option<(u64, u64, u64, usize)>,
+    /// The opponent whose page is open and since when, while their past
+    /// seasons aren't stored: they're looked up once the page has stayed
+    /// open for [`PAGE_OPEN_FOR`] (the flag: they were asked for).
+    page_open: Option<(String, Instant, bool)>,
 }
 
 /// The navigation column's width.
 const NAV_WIDTH: f32 = 196.0;
 
+/// How long an opponent's page stays open before their past seasons are
+/// looked up.
+const PAGE_OPEN_FOR: Duration = Duration::from_millis(700);
 const SETTINGS_KEY: &str = "settings";
 const PREFS_KEY: &str = "prefs";
 
@@ -400,6 +409,7 @@ impl EppiApp {
             demo,
             filters_menu: FiltersMenu::default(),
             rank_plan_key: None,
+            page_open: None,
         };
         app.load_seasons();
         app.load_histories();
@@ -429,11 +439,7 @@ impl EppiApp {
     /// Everyone's stored seasons, for the rank filter.
     fn load_histories(&mut self) {
         let Some(conn) = &self.conn else { return };
-        self.data.histories = db::load_histories(conn)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(code, (seasons, at))| (code, (tiers(&seasons), at)))
-            .collect();
+        self.data.histories = db::load_histories(conn).unwrap_or_default();
     }
 
     /// The stored seasons for my code, and a fresh look once a day.
@@ -581,10 +587,9 @@ impl EppiApp {
                                 }
                                 self.ranks.answered(std::slice::from_ref(&record));
                                 self.data.ranks.insert(code.clone(), record);
-                                self.data.histories.insert(
-                                    code,
-                                    (tiers(seasons.as_deref().unwrap_or_default()), now),
-                                );
+                                let mut seasons = seasons.unwrap_or_default();
+                                seasons.sort_by_key(|s| std::cmp::Reverse(s.start));
+                                self.data.histories.insert(code, (seasons, now));
                             }
                             self.data.ranks_revision += 1;
                         }
@@ -1204,10 +1209,52 @@ impl EppiApp {
         self.ranks.want_histories(needed);
     }
 
-    fn want_ranks(&mut self) {
+    /// Looks up the past seasons of the opponent whose page is open, when
+    /// they aren't stored or a season has ended since they were. One player
+    /// in one request (shared with the rank filter's when it has any
+    /// waiting), and only for a page that stays open: moving down the list
+    /// with the arrow keys asks for nobody.
+    fn want_page_seasons(&mut self, ctx: &egui::Context) {
+        let code = (self.prefs.view == View::Opponents && self.stats.is_none())
+            .then(|| self.opponents.selected_code())
+            .flatten()
+            .filter(|code| {
+                let data = &self.data;
+                let latest_end = data.seasons.iter().filter_map(|s| s.end).max();
+                let fetched_at = data.histories.get(*code).map(|(_, at)| *at);
+                code.contains('#')
+                    // No account has the code: nothing to look up.
+                    && data.rank(code).is_none_or(|r| r.found)
+                    && crate::ranks::history_is_stale(fetched_at, latest_end)
+                    && !self.ranks.history_recently_failed(code)
+            });
+        let Some(code) = code else {
+            self.page_open = None;
+            return;
+        };
+        match &mut self.page_open {
+            Some((open, _, true)) if open == code => {}
+            Some((open, since, asked)) if open == code => {
+                let left = PAGE_OPEN_FOR.saturating_sub(since.elapsed());
+                if left.is_zero() {
+                    self.ranks.want_history_first(code);
+                    *asked = true;
+                } else {
+                    ctx.request_repaint_after(left);
+                }
+            }
+            _ => {
+                self.page_open = Some((code.to_owned(), Instant::now(), false));
+                ctx.request_repaint_after(PAGE_OPEN_FOR);
+            }
+        }
+    }
+
+    fn want_ranks(&mut self, ctx: &egui::Context) {
         if !self.settings.fetch_ranks {
             return;
         }
+        self.want_page_seasons(ctx);
         let codes: Vec<String> = match self.prefs.view {
             View::Replays => self.replays.visible_codes(&self.data, &self.derived),
             View::Tonight => self.tonight.visible_codes(&self.data),
@@ -1304,7 +1351,7 @@ impl eframe::App for EppiApp {
 
         self.filters_menu(&ctx);
         self.toasts(&ctx);
-        self.want_ranks();
+        self.want_ranks(&ctx);
         let mut tour_done = false;
         if let Some(tour) = &mut self.screenshots {
             tour_done = tour.step(&ctx, frame, &mut self.prefs, &self.data, &mut actions);
@@ -1362,12 +1409,4 @@ pub fn outcome_word(outcome: Outcome) -> &'static str {
         Outcome::Loss => "Lost",
         Outcome::Unknown => "No result",
     }
-}
-
-/// Season id to rank name, from a player's seasons.
-fn tiers(seasons: &[model::Season]) -> HashMap<String, String> {
-    seasons
-        .iter()
-        .map(|s| (s.id.clone(), s.rank.clone()))
-        .collect()
 }

@@ -4,7 +4,8 @@
 //! Slippi says to slow down. The rows on screen come first: when you
 //! scroll past rows faster than they're looked up, the oldest asks are
 //! dropped. It also fetches the ranked seasons' calendar (with how you
-//! finished each one), and for the rank filter, opponents' past seasons.
+//! finished each one), and opponents' past seasons: for the rank filter,
+//! and first of all for the opponent whose page is open.
 
 use crate::library::db::RankRecord;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -32,6 +33,13 @@ enum Request {
     Seasons(String),
     /// Every season of these players (for the rank filter).
     Histories(Vec<String>),
+    /// Every season of the player whose page is open: ahead of the rest,
+    /// in the same request as the next of them. `waiting`: it was asked
+    /// for before, so it only moves up if it hasn't gone out yet.
+    HistoryFirst {
+        code: String,
+        waiting: bool,
+    },
     Shutdown,
 }
 
@@ -145,6 +153,19 @@ impl RankService {
         }
     }
 
+    /// Asks for every season of `code` ahead of the others waiting (their
+    /// page is open). It goes out with the next batch, not by itself.
+    pub fn want_history_first(&mut self, code: &str) {
+        if !code.contains('#') {
+            return;
+        }
+        let waiting = !self.pending_histories.insert(code.to_owned());
+        let _ = self.requests.send(Request::HistoryFirst {
+            code: code.to_owned(),
+            waiting,
+        });
+    }
+
     pub fn histories_answered(&mut self, codes: impl IntoIterator<Item = String>) {
         for code in codes {
             self.pending_histories.remove(&code);
@@ -228,6 +249,10 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
                 histories.extend(codes);
                 continue;
             }
+            Ok(Request::HistoryFirst { code, waiting }) => {
+                move_to_front(&mut histories, code, waiting);
+                continue;
+            }
             Ok(Request::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
             Err(RecvTimeoutError::Timeout) => {}
         }
@@ -300,6 +325,28 @@ fn run(requests: Receiver<Request>, results: Sender<Reply>, repaint: impl Fn()) 
             }
         }
         repaint();
+    }
+}
+
+/// Puts `code` at the front of `queue`, once. With `only_if_queued`, a
+/// code that isn't in the queue stays out: its request already went.
+fn move_to_front(queue: &mut VecDeque<String>, code: String, only_if_queued: bool) {
+    let before = queue.len();
+    queue.retain(|c| *c != code);
+    if !only_if_queued || queue.len() < before {
+        queue.push_front(code);
+    }
+}
+
+/// Whether `code`'s stored seasons (fetched at `fetched_at`, if ever) miss a
+/// season that has ended since. A finished season never changes, so seasons
+/// fetched after the latest one ended (`latest_end`) are complete until the
+/// next one ends.
+pub fn history_is_stale(fetched_at: Option<i64>, latest_end: Option<i64>) -> bool {
+    match (fetched_at, latest_end) {
+        (None, _) => true,
+        (Some(at), Some(end)) => at < end,
+        (Some(_), None) => false,
     }
 }
 
@@ -419,5 +466,38 @@ mod tests {
         assert_eq!(fresh_for(&found(true), Some(now - 90 * DAY), now), 7 * DAY);
         // No account has the code: a month, however recent.
         assert_eq!(fresh_for(&found(false), Some(now), now), 30 * DAY);
+    }
+
+    #[test]
+    fn stored_seasons_last_until_a_season_ends() {
+        // Never fetched.
+        assert!(history_is_stale(None, Some(100)));
+        assert!(history_is_stale(None, None));
+        // Fetched before the latest season ended: that season is missing.
+        assert!(history_is_stale(Some(99), Some(100)));
+        // Fetched since: complete, however long ago.
+        assert!(!history_is_stale(Some(100), Some(100)));
+        assert!(!history_is_stale(Some(5_000), Some(100)));
+        // No season has ended yet (or the calendar isn't known).
+        assert!(!history_is_stale(Some(1), None));
+    }
+
+    #[test]
+    fn an_open_page_goes_to_the_front_of_the_queue_once() {
+        let queue = |codes: &[&str]| -> VecDeque<String> {
+            codes.iter().map(|c| (*c).to_owned()).collect()
+        };
+        // New: it goes first.
+        let mut q = queue(&["A#1", "B#2"]);
+        move_to_front(&mut q, "C#3".into(), false);
+        assert_eq!(q, queue(&["C#3", "A#1", "B#2"]));
+        // Already waiting: it moves up and isn't asked for twice.
+        let mut q = queue(&["A#1", "B#2", "C#3"]);
+        move_to_front(&mut q, "C#3".into(), true);
+        assert_eq!(q, queue(&["C#3", "A#1", "B#2"]));
+        // Asked for before and no longer waiting: its request went out.
+        let mut q = queue(&["A#1"]);
+        move_to_front(&mut q, "C#3".into(), true);
+        assert_eq!(q, queue(&["A#1"]));
     }
 }

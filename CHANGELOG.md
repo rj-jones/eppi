@@ -7,6 +7,7 @@ What changed in each release. The format follows [Keep a Changelog](https://keep
 ### Added
 
 - A button beside an opponent's code opens their Slippi profile in your browser.
+- An opponent's page lists how they finished each past ranked season, as their Slippi profile does: rank, rating and set record. Seasons already stored for the rank filter show at once. Otherwise a page that stays open looks them up, one player in one request, and not again until a season ends.
 
 ### Fixed
 

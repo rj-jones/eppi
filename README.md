@@ -19,7 +19,7 @@ Eppi reads every replay in your Slippi folders once and keeps an index, so it ne
 - **Search.** Find anyone by netplay name, connect code or in-game tag. Suggestions show their character, rank and your record against them.
 - **Stats.** Each game's stats as Slippi Launcher shows them (Overview, Kills, Punishes, Actions). The numbers are worked out the way slippi-js does it and match it exactly on 8,634 of 8,635 real replays. You can play any kill or punish from that moment.
 - **Play.** Play a game, a whole set, a kill or a punish in Slippi's playback Dolphin, which Eppi finds through Slippi Launcher.
-- **Opponents.** Everyone you've played, with your record against them and their rank. For each one: how you do against each of their characters and on each stage, your history, and your notes.
+- **Opponents.** Everyone you've played, with your record against them and their rank. For each one: how they finished each past ranked season, how you do against each of their characters and on each stage, your history, and your notes. A button opens their Slippi profile.
 - **Me.** Your record, your rank and how you finished every season, and your numbers next to your opponents' (openings per kill, damage per opening, neutral wins, L-cancels and more). Also your results by matchup, stage and character, a week-by-week table to see whether you're improving, and a matchup report: what kills you, what you kill with, and which openings pay off.
 - **Highlights.** Search every punish you've landed (or taken) by damage, kills or zero-to-deaths, and watch the best ones back to back.
 
@@ -82,7 +82,7 @@ Windows is where Eppi is used day to day. macOS and Linux build and pass the tes
 
 The first time it starts, Eppi takes your connect code and replay folder from Slippi Launcher. In Settings, add alt codes so their games count as yours, and add every folder that holds replays. Folders inside each other are read once, and a replay copied into several places counts once. The index lives in `%LOCALAPPDATA%\Eppi` on Windows, `~/Library/Application Support/eppi` on macOS and `~/.local/share/eppi` on Linux.
 
-Ranks come from Slippi's servers: one request for up to 25 players, at most one a second. Each player is looked up at most once a day, or once a week if you haven't played them in a month. Filtering by rank looks up the seasons of only the opponents in the games your other filters keep, and a finished season only once. You can turn lookups off in Settings.
+Ranks come from Slippi's servers: one request for up to 25 players, at most one a second. Each player is looked up at most once a day, or once a week if you haven't played them in a month. Filtering by rank looks up the seasons of only the opponents in the games your other filters keep, and a finished season only once. An opponent's page uses the seasons already stored. If there are none, or a season has ended since, it looks up that one player once the page has stayed open for a moment. You can turn lookups off in Settings.
 
 ## How it's built
 

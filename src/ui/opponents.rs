@@ -123,6 +123,11 @@ pub struct State {
 }
 
 impl State {
+    /// The opponent whose page is open.
+    pub fn selected_code(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
     pub fn select(&mut self, code: &str) {
         self.selected = Some(code.to_owned());
         self.reveal = Some(code.to_owned());
@@ -333,6 +338,7 @@ impl State {
                     .show(ui, |ui| {
                         opponent_header(ui, summary, data, actions);
                         ui.add_space(theme::space::M);
+                        past_seasons(ui, summary, data);
                         self.note_editor(ui, &summary.code, data, actions);
                         ui.add_space(theme::space::M);
                         breakdowns(ui, summary, data, derived);
@@ -552,6 +558,73 @@ fn opponent_header(ui: &mut egui::Ui, summary: &Summary, data: &Data, actions: &
     });
 }
 
+/// The finished seasons to list on a player's page, newest first: the ones
+/// they played a ranked set in.
+pub fn played_past_seasons(seasons: &[crate::model::Season]) -> Vec<&crate::model::Season> {
+    let mut played: Vec<_> = seasons
+        .iter()
+        .filter(|s| !s.is_current() && s.sets > 0)
+        .collect();
+    played.sort_by_key(|s| std::cmp::Reverse(s.start));
+    played
+}
+
+/// How they finished each past ranked season, as slippi.gg lists it.
+fn past_seasons(ui: &mut egui::Ui, summary: &Summary, data: &Data) {
+    // No account has the code (an account has a season at least: the one
+    // running now): the rank line says so already.
+    let stored = data.histories.get(&summary.code);
+    if data.rank(&summary.code).is_some_and(|r| !r.found)
+        || stored.is_some_and(|(seasons, _)| seasons.is_empty())
+    {
+        return;
+    }
+    ui.label(theme::caption("Past seasons"));
+    match stored {
+        None => {
+            ui.label(theme::muted("Not looked up yet").size(theme::text::SMALL));
+        }
+        Some((seasons, _)) => {
+            let played = played_past_seasons(seasons);
+            if played.is_empty() {
+                ui.label(theme::muted("No ranked sets in a past season").size(theme::text::SMALL));
+            }
+            for season in played {
+                let rank = crate::app::display_rank(&season.rank);
+                let row = ui.horizontal(|ui| {
+                    if let Some(source) = widgets::rank_source(&rank) {
+                        ui.add(egui::Image::new(source).fit_to_exact_size(vec2(20.0, 20.0)));
+                    }
+                    ui.label(&season.name);
+                    ui.label(RichText::new(&rank).color(widgets::rank_color(&rank)));
+                    if season.rating > 0.0 {
+                        ui.label(
+                            theme::muted(format!("{:.0}", season.rating)).size(theme::text::SMALL),
+                        );
+                    }
+                    if let (Some(w), Some(l)) = (season.wins, season.losses) {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Their own sets: plain, not the colours of my
+                            // record against them.
+                            ui.label(format!("{w}–{l}"));
+                        });
+                    }
+                });
+                if let Some(end) = season.end {
+                    row.response.on_hover_text(format!(
+                        "{} to {}, {} set{}",
+                        crate::time::month_label(season.start),
+                        crate::time::month_label(end),
+                        season.sets,
+                        if season.sets == 1 { "" } else { "s" }
+                    ));
+                }
+            }
+        }
+    }
+    ui.add_space(theme::space::M);
+}
+
 /// Their characters and the stages: how you do on each.
 fn breakdowns(ui: &mut egui::Ui, summary: &Summary, data: &Data, derived: &Derived) {
     let mut by_character: HashMap<(u8, u8), (u32, u32)> = HashMap::new();
@@ -701,5 +774,39 @@ fn history(
         {
             actions.push(Action::GoToGame(first.id));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Season;
+
+    fn season(id: &str, start: i64, end: Option<i64>, sets: u32) -> Season {
+        Season {
+            id: id.into(),
+            start,
+            end,
+            sets,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_page_lists_the_finished_seasons_they_played() {
+        let seasons = [
+            season("season-1", 100, Some(200), 12),
+            // Still running: the rank line above shows it.
+            season("season-3", 300, None, 40),
+            // An account, and no ranked set that season.
+            season("beta-season", 0, Some(100), 0),
+            season("season-2", 200, Some(300), 1),
+        ];
+        let ids: Vec<&str> = played_past_seasons(&seasons)
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect();
+        assert_eq!(ids, ["season-2", "season-1"]);
+        assert!(played_past_seasons(&[]).is_empty());
     }
 }

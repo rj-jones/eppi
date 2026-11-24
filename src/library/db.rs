@@ -587,8 +587,8 @@ pub fn save_seasons(
     tx.commit()
 }
 
-/// Every player's stored seasons and when they were fetched (a player
-/// with no account has none).
+/// Every player's stored seasons, newest first, and when they were fetched
+/// (a player with no account has none).
 pub fn load_histories(
     conn: &Connection,
 ) -> rusqlite::Result<HashMap<String, (Vec<crate::model::Season>, i64)>> {
@@ -609,6 +609,9 @@ pub fn load_histories(
         {
             entry.0.push(season);
         }
+    }
+    for (seasons, _) in out.values_mut() {
+        seasons.sort_by_key(|s| std::cmp::Reverse(s.start));
     }
     Ok(out)
 }

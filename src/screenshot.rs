@@ -286,7 +286,8 @@ fn featured_game(data: &Data) -> Option<&crate::model::Game> {
         .find(|g| g.stats_version > 0 && g.outcome(&data.me) == crate::model::Outcome::Win)
 }
 
-/// The ranked opponent I've played most among my last 400 games.
+/// The ranked opponent I've played most among my last 400 games; one whose
+/// past seasons are stored first, so their page shows them.
 fn rival(data: &Data) -> Option<String> {
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     let ranked = |code: &str| {
@@ -307,8 +308,13 @@ fn rival(data: &Data) -> Option<String> {
             *counts.entry(&opponent.code).or_default() += 1;
         }
     }
+    let has_past_seasons = |code: &str| {
+        data.histories.get(code).is_some_and(|(seasons, _)| {
+            !crate::ui::opponents::played_past_seasons(seasons).is_empty()
+        })
+    };
     counts
         .into_iter()
-        .max_by_key(|(_, n)| *n)
+        .max_by_key(|(code, n)| (has_past_seasons(code), *n))
         .map(|(code, _)| code.to_owned())
 }
